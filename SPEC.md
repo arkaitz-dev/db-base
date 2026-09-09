@@ -85,11 +85,22 @@ Neither needs a query builder chosen for them.
 
 ## 6 · The datasource as a component
 
+The public namespace is `dev.arkaitz.db-base`, and `start` and `stop` are ordinary
+functions returning a plain map, the shape web-base's server already has.
+
 ```clojure
-(def db (db/start {:jdbc-url "jdbc:…" :user … :password … :pool {:max 10}}))
+(def db (db/start {:jdbc-url   "jdbc:…"
+                   :user       …
+                   :password   …
+                   :pool       {:max 10}
+                   :migrations {:dir "db/migration"}}))   ; or :migrations :none
 ;; => {:datasource … :migrations-applied n}
+(db/ready? db 2)                                          ; => true / false
 (db/stop db)
 ```
+
+`:datasource` is a `javax.sql.DataSource` and nothing more, so the host's choice of
+`next.jdbc` stays the host's.
 
 `start` fails loudly and names the key when configuration is missing or malformed,
 which is web-base's rule and earns its keep the same way: a pool that silently defaults
@@ -99,8 +110,39 @@ to something is a production incident with no symptom in development.
 The same reasoning as web-base's session key: a value invented at startup works
 beautifully until it does not, and differs per instance.
 
+**`:migrations` is required, and refusing them is a value it takes, not a key left
+out.** Optional-with-a-default is the trap: a host that types `:migration` would get a
+pool with no migrations and no complaint, which is the incident described two paragraphs
+above. `:migrations-applied` is then **absent from the handle, not zero** — zero says
+they ran and there was nothing to do, absent says they did not run.
+
+**One function, not two.** `start` opens the pool and runs the migrations in the same
+call. A separate `migrate!` turns §7 into "they run if the host remembers", and a pool
+that must not migrate is the thirty lines §12 talks about, written in the host.
+
 `stop` closes the pool. A component that cannot be stopped cannot be restarted, and a
 REPL that cannot restart is a REPL nobody uses.
+
+**`ready?` takes its timeout and has no default.** It answers whether the database is
+reachable, over `java.sql.Connection.isValid`, and it never throws. Not `SELECT 1`:
+that statement is rejected by HSQLDB and by Derby, and `SELECT 1 FROM DUAL` is rejected
+by HSQLDB, Derby and SQLite, so **there is no portable readiness query** and the
+one-line version in the host is a dialect table by the back door. The timeout is
+validated as a non-negative integer before the call, the same shape as web-base's
+`:port`: `isValid(0)` means no timeout at all, which is a hang, and a negative one
+throws on HSQLDB and on Derby.
+
+**Failure arrives within a bounded time.** Acquiring a connection is a blocking call,
+and a boot that waits forever is a hang, not a boot — the same reason web-base forces
+`:join? false`.
+
+**Failure is `ex-info`.** The message names the offending thing, the data carries
+`:config-key` as a vector path, and a driver's own exception is kept as `ex-cause`
+rather than swallowed. That is web-base's measured vocabulary, and a host that already
+dispatches on `:config-key` should not learn a second one. **No exception type of our
+own.** One rule web-base did not need: **the password and the JDBC URL are never
+echoed, in the message or in the data** — presence, never value, as auth-base already
+reports `:token-present?`. What a driver puts in its own exception is the driver's.
 
 ### Where that map comes from
 
@@ -132,9 +174,28 @@ What this library owns is the *running*, not the *writing*: it finds a directory
 host names, applies what has not been applied, in order, once, recording what it did.
 The SQL inside is the host's and speaks the host's engine.
 
+**Applying zero migrations from a directory the host named is an error, not success.**
+An empty or misspelt directory is the schema one deploy behind, arriving silently and
+reporting itself later as a bug somewhere else. A run that migrated nothing must say so
+loudly, the same way a test run that ran no tests is a red.
+
+**What a failure at migration N leaves behind.** Without this the section cannot be
+tested at all: any assertion would be inventing the bound it claims to check. The floor,
+and only the floor, because it is the part that holds on every engine — several do not
+run DDL inside a transaction, so batch atomicity is a gift from the engine and never the
+contract: **everything before N is applied and recorded, N is not recorded, `start`
+throws naming N, and the next boot attempts N again.** A migration that half-applied on
+an engine without transactional DDL is a repair the host performs, not a state this
+library pretends to unwind.
+
 **Which migration library sits underneath is not settled here.** It is a real decision
 with two or three defensible answers, and this workspace's rule is that tools are
-recorded once they have been run and observed, never chosen from convention.
+recorded once they have been run and observed, never chosen from convention. Two
+requirements constrain the choice without making it, and both come from rules already
+written down. It must support **two independent runs, with different control tables and
+different sources** — §8 explains why there are two. And its lock must offer a
+**bounded wait**: two instances booting at once is the ordinary case, and a lock without
+a deadline turns it into a hang.
 
 ## 8 · The session store it ships
 
