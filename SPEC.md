@@ -54,6 +54,41 @@ is *ours*, versioned with us, and an implementation living here would lock two o
 own modules to each other's releases in both directions. That adapter belongs in
 auth-base or in the host, and §8 shows how small it is.
 
+### How this is proven
+
+"Nothing may be PostgreSQL-shaped" cannot be checked by reading, and a discipline
+nobody can falsify is decoration. web-base already had this problem and answered it the
+same way: the rule it could not enforce by review, it enforced by a scan, and wrote in
+that scan's own docstring that it is the only signal.
+
+**The suite runs against two engines from different dialect families**, embedded, with
+no infrastructure, on the test classpath and never in `:deps`. One engine proves
+nothing: a suite that only ever runs on H2 passes with `MERGE` in it, and one that only
+runs on PostgreSQL passes with `ON CONFLICT`. **Which two is not recorded here** — it is
+a tool choice, and tools go in `CLAUDE.md` once they have been run and observed. What is
+recorded is the criterion, and one measured warning: the pair should be a strict engine
+next to a permissive one, because a strict engine rejects everything non-standard while
+a permissive one catches the opposite mistake — SQLite accepts an over-long `VARCHAR`
+in silence.
+
+**The guard is checked before it is trusted.** Each forbidden dialect is fired directly
+at each test connection and must be seen to fail there. Without that, a test harness
+that has drifted — an engine quietly in a compatibility mode — makes the whole thing
+decorative, permanently and with no symptom. This is not hypothetical: H2 in PostgreSQL
+mode accepts `ON CONFLICT DO NOTHING` and rejects the upsert form, which is neither what
+one would guess nor what it is usually said to do.
+
+**A source scan is worth having and is not enough.** It reads string literals only, and
+case-sensitively, or it fires on this document's own prose and on `(merge …)`; and it
+cannot see SQL built by concatenation, exactly as web-base's scan admits about its own
+narrowness. Every scan asserts first that it reached the real sources, because a walk
+over nothing is green for the wrong reason.
+
+**The single most valuable test in the library** is a concurrent delete and write,
+asserting the deleted session does not come back. It is what stops someone later
+"fixing" the zero-rows-updated case of §8 with an upsert, and auth-base already states
+the standard: a test that does not run the two concurrently has not tested it.
+
 ## 4 · The membership test
 
 **Would a bicycle rental and a clinic's appointment book need this, unchanged?** Both
@@ -301,6 +336,9 @@ Written down before it is tempting, because each of these has a plausible first 
 - **Read replicas, sharding, tenancy.** Real needs, all of them the host's.
 - **A `db` global.** Ambient state is the rule web-base was built to avoid; a datasource
   in a var root is the same mistake with a connection attached.
+- **A background thread.** A sweeper on a timer is the previous entry wearing a
+  different hat: a lifecycle the host did not ask for, and a shutdown path that will be
+  forgotten. Scheduling is the host's.
 
 ## 10 · Scope
 
@@ -308,6 +346,18 @@ Written down before it is tempting, because each of these has a plausible first 
 implementations of published third-party ports whose tables are its own.
 
 **Out**: everything in §9, the engine, the schema, the SQL, and the driver.
+
+**Integrant is used, not imposed.** `start` and `stop` are ordinary functions, and an
+optional namespace ships the `init-key` methods for a host that wires with Integrant;
+a host that does not is not blocked. This is web-base's rule rather than a preference of
+this library's, and it is stated there as the general one: it is what well-behaved
+Clojure libraries do. The namespace is the only place that may reference Integrant, and
+a scan enforces it, because an illegal require compiles, loads and passes every other
+test.
+
+**One key, never two.** The pool and its migrations are one component. Two keys let a
+host wire the pool and omit the migrations, which deletes §7's guarantee with no symptom
+until the first request meets a missing table.
 
 ## 11 · Settled, and open
 
@@ -319,15 +369,29 @@ implementations of published third-party ports whose tables are its own.
 | Configuration arrives as a map; it never reads a file or an environment | §5 |
 | The connection details live in an EDN outside the repository, read by the host | §6 |
 | It may implement a third party's port, never depend on a sibling of ours | §3, §8 |
-| Migrations run at boot or the process does not serve | §7 |
-| A stored session store ships here, with its own table | §8 |
+| Migrations run at boot or the process does not serve; zero applied is an error | §7 |
+| A stored session store ships here, with its own table and its own control table | §8 |
+| The store never upserts, and a zero-row update is correct | §8 |
+| §3 is proven against two engines, not by review | §3 |
+| Integrant is used, not imposed: an optional namespace, one key | §10 |
+| A readiness check belongs here, and its timeout has no default | §6 |
 
 **Open**
 
 - **The pool** and **the migration library** underneath. Both are real choices and
-  neither is made from convention.
-- **The sweep of expired sessions**: on write, on a timer, or by the operator.
-- Whether a **readiness check** belongs here or is one line in the host.
+  neither is made from convention. §7 states the two requirements the migration library
+  must meet, which constrain the choice without making it.
+- **Which two engines** the suite runs against. §3 states what the pair must satisfy;
+  the names go in `CLAUDE.md` once they have been run.
+- **Reclaiming expired rows**: on write, or by an operator calling a function this
+  library exposes. Not on a timer — §9. This is only about space: an expired session is
+  already invisible, because §8 puts the expiry in the read, and that part is settled.
+
+**Measured, but not settled — the residue.** Both are the kind of trap this document
+writes down before there is code: whether a real network driver honours the `isValid`
+timeout when a socket accepts and never answers, which the embedded engines cannot show;
+and whether `UUID/randomUUID` is safe under a native image, since the JDK holds that
+`SecureRandom` where a scan of our own var roots cannot see it.
 
 ## 12 · The honest argument against this library
 
