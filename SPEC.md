@@ -102,6 +102,26 @@ beautifully until it does not, and differs per instance.
 `stop` closes the pool. A component that cannot be stopped cannot be restarted, and a
 REPL that cannot restart is a REPL nobody uses.
 
+### Where that map comes from
+
+§5 says the configuration arrives resolved. This says where it is resolved from,
+because a rule about what a library may not read says nothing about where an operator
+should put a password.
+
+**The connection details live in an EDN file that is not in the repository.** It is the
+traditional `.env` in another format, and it is where web-base already keeps its signing
+key. `*.local.edn` is git-ignored in all three modules, which is what makes the
+statement true rather than aspirational. The password sits in that file literally, and
+that is the right place for it: what a password may never do is travel with the
+repository, be invented at startup, or come out of a file this library went looking for.
+
+**The host reads it; this library does not.** A host that already uses web-base has its
+readers and the `#wb/env` tag; one that does not reads the file with `clojure.edn` in
+three lines. Either way what reaches `start` is the map of §5, and this library never
+learns a filename. auth-base draws the same line for its bootstrap list — it arrives as
+data the host passes in — and drawing it is exactly what lets both modules compose with
+web-base without either depending on it.
+
 ## 7 · Migrations
 
 **They run at boot, before the first request, and the process does not serve if they
@@ -175,6 +195,7 @@ implementations of published third-party ports whose tables are its own.
 |---|---|
 | Engine-agnostic: any JDBC, the driver is the host's | §3 |
 | Configuration arrives as a map; it never reads a file or an environment | §5 |
+| The connection details live in an EDN outside the repository, read by the host | §6 |
 | It may implement a third party's port, never depend on a sibling of ours | §3, §8 |
 | Migrations run at boot or the process does not serve | §7 |
 | A stored session store ships here, with its own table | §8 |

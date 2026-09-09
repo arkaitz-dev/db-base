@@ -51,7 +51,9 @@ is any code to break.**
   code reports itself as a bug somewhere else entirely, hours later.
 - **Reading a file nobody named.** Configuration arrives as a map. A library that
   knows a filename can look for it, and then the directory a process started from
-  decides which database it opens.
+  decides which database it opens. The other half of the rule is where that map comes
+  from, and it is not optional either: the connection details, password included, live
+  in a `*.local.edn` that the host reads and that never reaches the repository.
 - **A connection per request, decided here.** The transaction boundary is the host's.
   Deciding it here makes every consumer's request handling this library's business.
 - **`take-challenge!` implemented as read-then-delete**, when auth-base's adapter is
