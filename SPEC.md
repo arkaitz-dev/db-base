@@ -1,13 +1,13 @@
-# base-db — specification
+# db-base — specification
 
-> **Coordinates.** Directory `base-db` · repository `arkaitz-dev/base-db` · artifact
-> `dev.arkaitz/base-db` on the day there is one.
+> **Coordinates.** Directory `db-base` · repository `arkaitz-dev/db-base` · artifact
+> `dev.arkaitz/db-base` on the day there is one.
 >
 > **Status.** Specification. No code. Written 2026-09-09.
 >
-> **Provenance.** The third of three: `web-base` serves HTTP, `base-auth` turns
+> **Provenance.** The third of three: `web-base` serves HTTP, `auth-base` turns
 > someone into a subject, and this opens the connection both of them are careful not
-> to open themselves. web-base §2 says it *never opens a database*; base-auth §7 says
+> to open themselves. web-base §2 says it *never opens a database*; auth-base §7 says
 > storage is a port with an in-memory default. This is what the host plugs into those
 > holes when it has a real database, and **§12 argues honestly about whether it
 > deserves to exist at all.**
@@ -49,10 +49,10 @@ function assumes `jsonb` or `LISTEN`, the library belongs to one engine.
 **It may implement a port defined by a stable third party. It must never depend on a
 sibling module of ours.** Ring's session store protocol lives in `ring-core`, is three
 functions long, has not changed in a decade, and is already on every relevant
-classpath — implementing it costs nothing and imposes nothing. base-auth's store port
+classpath — implementing it costs nothing and imposes nothing. auth-base's store port
 is *ours*, versioned with us, and an implementation living here would lock two of our
 own modules to each other's releases in both directions. That adapter belongs in
-base-auth or in the host, and §8 shows how small it is.
+auth-base or in the host, and §8 shows how small it is.
 
 ## 4 · The membership test
 
@@ -119,7 +119,7 @@ recorded once they have been run and observed, never chosen from convention.
 ## 8 · The session store it ships
 
 This is the reason the library is obviously worth existing today, and it settles a
-question that came up while base-auth was specified.
+question that came up while auth-base was specified.
 
 Ring's session store port is three functions — `read-session`, `write-session`,
 `delete-session` — keyed by session id. web-base already uses that port and ships the
@@ -132,7 +132,7 @@ It ships **here**, with its own migration, in its own namespace, because it impl
 a third party's port under rule §3 and because its table is this library's own rather
 than the host's.
 
-**base-auth's store is a different case and does not ship here.** Its protocol is ours,
+**auth-base's store is a different case and does not ship here.** Its protocol is ours,
 and the adapter is a page of code the host writes over a datasource this library
 already gave it:
 

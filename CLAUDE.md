@@ -8,9 +8,9 @@ repeats only the few rules that get broken silently.
 
 ## What this is
 
-`dev.arkaitz/base-db` — a pooled connection with a lifecycle, migrations that run
+`dev.arkaitz/db-base` — a pooled connection with a lifecycle, migrations that run
 before anything serves, and the decisions behind both. The third of three:
-`web-base` serves HTTP and never opens a database; `base-auth` turns someone into a
+`web-base` serves HTTP and never opens a database; `auth-base` turns someone into a
 subject and takes storage as a port; this is what a host plugs into those holes.
 
 ## Project state
@@ -33,7 +33,7 @@ will be written by someone who only has that engine in front of them.
 
 **3 · It may implement a port defined by a stable third party; it must never depend on
 a sibling module of ours.** Ring's session store is three functions old enough to
-trust. base-auth's store is ours, and an implementation here would lock two of our
+trust. auth-base's store is ours, and an implementation here would lock two of our
 libraries to each other's releases in both directions.
 
 ## Traps already identified — do not rediscover them
@@ -54,7 +54,7 @@ is any code to break.**
   decides which database it opens.
 - **A connection per request, decided here.** The transaction boundary is the host's.
   Deciding it here makes every consumer's request handling this library's business.
-- **`take-challenge!` implemented as read-then-delete**, when base-auth's adapter is
+- **`take-challenge!` implemented as read-then-delete**, when auth-base's adapter is
   eventually written. Single use is the whole security of a link that travels by
   email, and two statements have a window between them.
 
