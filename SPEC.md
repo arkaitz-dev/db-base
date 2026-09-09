@@ -309,6 +309,18 @@ It ships **here**, with its own migration, in its own namespace, because it impl
 a third party's port under rule §3 and because its table is this library's own rather
 than the host's.
 
+**What it costs, as a number, so §12 can be applied to one.** This section is what puts
+`ring/ring-core` in `:deps`, and that is **1.02 MB in nine jars** — measured, 1,066,078
+bytes. `ring-core` itself is 34,567 of them: the rest is what it drags, and most of the
+rest is `commons-io` at 585 KB, `commons-codec` at 354 KB and `commons-fileupload2-core`
+at 70 KB. **File-upload machinery on the classpath of §4's bicycle rental, which never
+serves HTTP.** It is worth writing down next to the Integrant decision of §10, whose
+whole closure is 23,504 bytes — this section costs forty-five times that, and it was the
+one nobody thought to weigh. A host that already runs web-base or auth-base pays it
+once, since both impose ring-core too. A host that only wanted a pool pays it for a
+session store it may never construct, and §12's exit condition is where that gets
+settled.
+
 **auth-base's store is a different case and does not ship here.** Its protocol is ours,
 and the adapter is a page of code the host writes over a datasource this library
 already gave it:
