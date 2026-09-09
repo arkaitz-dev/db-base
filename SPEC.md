@@ -199,15 +199,76 @@ a deadline turns it into a hang.
 
 ## 8 · The session store it ships
 
-This is the reason the library is obviously worth existing today, and it settles a
-question that came up while auth-base was specified.
+This is the reason the library is worth existing today, and it settles a question that
+came up while auth-base was specified.
 
 Ring's session store port is three functions — `read-session`, `write-session`,
-`delete-session` — keyed by session id. web-base already uses that port and ships the
-signed-cookie implementation, which cannot be revoked from the server. **A consumer
-that needs to end a session from the server needs a stored one**, and that
-implementation is small enough to state completely: one table of key, data and expiry;
-write generates the key when it is nil; delete removes the row; expired rows are swept.
+`delete-session` — keyed by session id. web-base uses that port and ships nothing but
+the signed-cookie implementation; it accepts any `{:store s}` the host hands it, and
+that is the socket this fits.
+
+**What a stored session buys, stated exactly, because the obvious answer is wrong.**
+Ending every session of a subject does *not* need one: auth-base §10 revokes by
+generation on the subject and works with every store, the cookie included. Two things
+survive that, and both are properties of the cookie rather than opinions:
+
+- **A copied cookie never expires.** The sealed payload carries no timestamp, so
+  `Max-Age` is the only expiry there is, and `Max-Age` is enforced by an honest client.
+  A stored session expires on the server or not at all.
+- **`delete-session` under the cookie store cannot revoke anything.** It seals and
+  returns a *fresh empty* cookie; the old sealed value stays cryptographically valid
+  forever. Ending one session — one stolen device, the others left alive — needs a row.
+
+Generation revocation is also not free: its cost is one store read per request. The
+choice is not infrastructure against none; it is which table.
+
+The implementation is small enough to state completely, and every line below is a way
+it fails silently if written from intuition.
+
+**The two statements, and the trap.** Ring never asks a store to upsert. The key
+reaching `write-session` is non-nil only when `read-session` returned that row in the
+same request, because the middleware sets the request's key to nil on a miss. So a nil
+key is an `INSERT` under a key this store mints, a non-nil key is an `UPDATE`, and both
+are ANSI SQL that needs no `ON CONFLICT`, no `MERGE` and no dialect. **An `UPDATE` that
+touches zero rows is the correct outcome and must do nothing**: the row is gone because
+someone logged out, revoked it, or it expired between the read and the write.
+Re-inserting it there undoes a revocation — which is the whole point of §8 — and adds a
+primary-key race to a path that could not previously fail. **`UPDATE`-then-`INSERT`-if-zero
+is the trap**, the same shape as `take-challenge!` written as read-then-delete: it is
+engine-neutral, it looks defensive, and it resurrects the dead. Ring's own `MemoryStore`
+does exactly that (`swap! assoc`), so the first person to check the reference
+implementation will find the wrong answer.
+
+**Four more that fail silently.**
+
+- **`read-session` returns `nil` for a row that is not there, never `{}`.** `{}` is
+  truthy, so the middleware keeps the key and then asks for an `UPDATE` of a row that
+  does not exist — the store manufactures the very case it was avoiding. An expired row
+  is a miss, so the expiry predicate belongs in the read.
+- **`delete-session` accepts a nil key** and returns without touching the database.
+  Ring passes nil on the rotation path, which web-base already documents.
+- **The key is a `java.util.UUID`**, which is what Ring's own store does and what the
+  protocol's docstring asks for. Nothing of ours in a var root.
+- **Sessions are EDN, `pr-str` and `clojure.edn/read-string`, with `:readers` passed
+  through.** It is what Ring's cookie store does and it imports no codec §3 forbids.
+  Ring also asserts the round trip *on write*; a store that only calls `pr-str` will
+  store a session that cannot be read back, and will do it quietly.
+
+**The table, and why these types.** One table: `VARCHAR(36)` key, `CLOB` data, `BIGINT`
+expiry as epoch milliseconds — auth-base's own convention. Measured on H2, H2 in
+PostgreSQL mode, HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
+rejected by HSQLDB and by Derby. `VARCHAR(n)` for the data is worse than it looks — an
+over-long session throws on H2, HSQLDB and Derby and is silently truncated by SQLite, so
+the failure mode itself would depend on the engine. `CREATE TABLE IF NOT EXISTS` is not
+an escape either: Derby rejects it, it would run outside §7's boot gate, and a table
+with no recorded version can never be changed.
+
+**Two control tables, not one, and the library's run goes first.** The library's table
+names are written here and never generated. A single shared table breaks three ways,
+each silently: a library upgrade adds a migration that sorts below ones already applied
+and is skipped forever; a tool that checksums applied migrations bricks every host's
+boot the day the library edits its own file; and the host's `reset` drops the library's
+history with its own.
 
 It ships **here**, with its own migration, in its own namespace, because it implements
 a third party's port under rule §3 and because its table is this library's own rather
