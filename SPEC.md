@@ -274,6 +274,18 @@ engine-neutral, it looks defensive, and it resurrects the dead. Ring's own `Memo
 does exactly that (`swap! assoc`), so the first person to check the reference
 implementation will find the wrong answer.
 
+**That is not a hypothesis, and it is the strongest evidence this document has.** The
+one JDBC session store the ecosystem has, `luminus-framework/jdbc-ring-session`, is
+written exactly that way: `update!`, and on zero rows affected, `insert!`. Its
+maintainer gives the reason in that project's issue 13 — *the library mirrors the
+behavior of the memory store in Ring core.* Mirroring an in-memory `assoc` is safe in
+memory and is not safe in a row another request can delete, so a session logged out or
+revoked while one of its own requests is in flight comes back, with its old contents.
+It has some 57,000 downloads and the code has read that way since 2019. **The case for
+§8 is therefore not that this is hard to write** — it is thirty lines — **but that the
+ecosystem's existing thirty lines followed the reference implementation into the wrong
+answer.** That is what §12 means when it says the decisions are the value.
+
 **Four more that fail silently.**
 
 - **`read-session` returns `nil` for a row that is not there, never `{}`.** `{}` is
