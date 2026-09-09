@@ -412,3 +412,22 @@ library is still nothing but the wiring of §6 and §7, then it should be folded
 into the applications and deleted. web-base §7's rule points the same way from the
 other side: when in doubt, leave it in the consumer, because moving code *into* a
 library later is cheap and getting it back out is not.
+
+**As of 2026-09-09 it has no consumer at all.** Not one, never mind two. That is the
+sentence to read before adding anything to §10's *In* list: what is written above is a
+design for consumers that do not exist yet, and web-base §7 says what happens to a base
+built before there are two — it fits the first one, and becomes a part of that
+application maintained separately. **Nothing enters the scope without a consumer that
+asked for it.**
+
+**And a second thing would falsify the case in favour, earlier than the exit
+condition.** The argument above is that the decisions are the value. If, once the pool
+and the migration library of §11 have actually been run and recorded, they turn out to
+be the choices every host would have made anyway, then the decision record is a
+paragraph and not a library — without waiting for a second consumer to prove it.
+
+What is *not* subject to that, and is the honest reason this document is worth its
+length today, is not the store's existence but its contract: that a zero-row update is
+correct, that an upsert resurrects a revoked session, and that Ring's own reference
+implementation does the wrong thing. That is the part which would otherwise be copied —
+copied wrong.

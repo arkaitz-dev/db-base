@@ -59,6 +59,15 @@ is any code to break.**
 - **`take-challenge!` implemented as read-then-delete**, when auth-base's adapter is
   eventually written. Single use is the whole security of a link that travels by
   email, and two statements have a window between them.
+- **The session store written as an upsert**, or as update-then-insert-if-zero. Ring
+  never asks for one, and re-inserting a row whose update touched nothing resurrects a
+  session someone revoked. Ring's own `MemoryStore` upserts, so the reference
+  implementation is the wrong answer here. SPEC §8.
+- **A migration run that applies zero migrations reporting success.** An empty or
+  misspelt directory is the schema one deploy behind. Same shape as a test run that
+  ran no tests: the count is the signal.
+- **A sweeper on a timer.** A background thread is a lifecycle the host did not ask
+  for and a shutdown path that gets forgotten. SPEC §9.
 
 ## Where the boundary is expected to erode
 
