@@ -15,11 +15,40 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 ## Project state
 
-**Specification settled 2026-09-09; no code.** No build or test command is recorded
-here, because none has been run. Commands go in this file **only once they have
-actually been run and observed to work**, never from convention. That applies with
-particular force to the two choices SPEC §11 leaves open, the pool and the migration
-library: neither is picked from habit.
+**Specification settled 2026-09-09, made executable 2026-09-11; still no code.** No
+build or test command is recorded here, because none has been run. Commands go in this
+file **only once they have actually been run and observed to work**, never from
+convention. That applies with particular force to the two choices SPEC §11 leaves open,
+the pool and the migration library: neither is picked from habit.
+
+## Active work
+
+The specification is executable and has not been executed. **The next step is code, not
+more specification** — SPEC §11's two open choices cannot be closed on paper, because a
+tool is recorded here only after being run.
+
+- [ ] `deps.edn`: Clojure, `next.jdbc`, and the two test engines on `:test` only.
+- [ ] `src/dev/arkaitz/db_base.clj`: `start`, `stop`, `ready?`, as SPEC §6 specifies.
+- [ ] Choose the pool by running it; record the command that worked.
+- [ ] One trial migration, verifying §7's failure class — a failure at N leaves 1..N-1
+      applied and recorded, N unrecorded, `start` throws naming N, next boot retries N.
+- [ ] The two-engine test with its positive control: the proof of §3.
+- [ ] **The engine is unchosen.** The 2026-09-11 discussion leaned PostgreSQL —
+      `DELETE … RETURNING` makes auth-base's `take-challenge!` atomic in one statement —
+      but §3 still requires agnosticism and nothing was written. Naming it is a §3 edit
+      plus §8's column types, and needs an explicit decision.
+
+Three threads belong to **auth-base**, not here, and need raising before that repository
+is touched:
+
+- [ ] `auth-base/SPEC.md:159` contradicts §8 of this document about who ships the JDBC
+      implementation of its Store port, and still calls this project `base-db`.
+- [ ] auth-base has no ceremony for attaching a second identifier to an existing
+      subject — log in by email, later add a phone. Its §15 lists "the second factor",
+      which is a different thing.
+
+Done, recorded so it is not repeated: the upsert trap of §8 was reported upstream at
+`luminus-framework/jdbc-ring-session` issue 25.
 
 ## The three rules that must survive contact with code
 
