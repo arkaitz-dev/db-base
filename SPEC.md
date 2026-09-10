@@ -46,6 +46,15 @@ the host writes SQL for the engine it brought. Nothing in this library may be
 PostgreSQL-shaped, which is a discipline rather than a preference: the moment one
 function assumes `jsonb` or `LISTEN`, the library belongs to one engine.
 
+**And nearly all of that agnosticism is free.** The pool takes a JDBC URL, the migration
+run hands the host's SQL to a library, and readiness is `Connection.isValid` — none of
+the three can be engine-shaped, because JDBC and the JDK are doing the work. **The only
+place this library writes SQL of its own is §8**: one table and five statements. So the
+discipline costs something in exactly one place, and it is worth saying because it
+decides what choosing an engine would change here — almost nothing. The engine matters
+in the host's SQL and in the adapter auth-base writes over the datasource this library
+handed it, and neither of those is this library's to decide.
+
 **It may implement a port defined by a stable third party. It must never depend on a
 sibling module of ours.** Ring's session store protocol lives in `ring-core`, is three
 functions long, has not changed in a decade, and is already on every relevant
@@ -309,6 +318,17 @@ over-long session throws on H2, HSQLDB and Derby and is silently truncated by SQ
 the failure mode itself would depend on the engine. `CREATE TABLE IF NOT EXISTS` is not
 an escape either: Derby rejects it, it would run outside §7's boot gate, and a table
 with no recorded version can never be changed.
+
+**The five statements are ANSI by measured choice, not by luck, and a second engine
+would be a sibling namespace rather than a new layer.** Ring's port is already the
+abstraction: `dev.arkaitz.db-base.session.postgres` beside a `…session.mysql` on the day
+one is needed, each implementing the same three functions of a third party's protocol
+under §3. Adding an engine is adding a namespace. **A dialect table here would be the
+mistake**, and a tempting one, because it would make correctness a function of an
+enumerated list — and the first engine absent from that list breaks with no symptom
+until it is in production. It would also be more code than the five statements it
+abstracts, and being the only implementation, it would be shaped around the one engine
+that existed when it was written.
 
 **Two control tables, not one, and the library's run goes first.** The library's table
 names are written here and never generated. A single shared table breaks three ways,
