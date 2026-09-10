@@ -29,7 +29,12 @@ tool is recorded here only after being run.
 
 - [ ] `deps.edn`: Clojure, `next.jdbc`, and the two test engines on `:test` only.
 - [ ] `src/dev/arkaitz/db_base.clj`: `start`, `stop`, `ready?`, as SPEC §6 specifies.
-- [ ] Choose the pool by running it; record the command that worked.
+- [ ] Choose the pool by running it; record the command that worked. **The agent picks
+      the candidates, runs them and reports measurements; the decision is the user's**
+      (settled 2026-09-11). For a pool that means the transitive closure in bytes, a
+      bounded acquisition timeout as §6 requires, a clean stop, and whether it drags a
+      logging backend — which §3 forbids. For the migration library, §7 already states
+      the two requirements.
 - [ ] One trial migration, verifying §7's failure class — a failure at N leaves 1..N-1
       applied and recorded, N unrecorded, `start` throws naming N, next boot retries N.
 - [ ] The two-engine test with its positive control: the proof of §3.
