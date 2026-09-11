@@ -136,7 +136,7 @@ functions returning a plain map, the shape web-base's server already has.
 (def db (db/start {:jdbc-url   "jdbc:…"
                    :user       …
                    :password   …
-                   :pool       {:max 10}
+                   :pool       {:max 10 :timeout-ms 5000}
                    :migrations {:dir "db/migration"}}))   ; or :migrations :none
 ;; => {:datasource … :migrations-applied n}
 (db/ready? db 2)                                          ; => true / false
@@ -152,7 +152,17 @@ to something is a production incident with no symptom in development.
 
 **A password is never defaulted and never generated.** It arrives or the call fails.
 The same reasoning as web-base's session key: a value invented at startup works
-beautifully until it does not, and differs per instance.
+beautifully until it does not, and differs per instance. **Arriving means the key is
+present and its value is a string, the empty string included**, and the same holds for
+`:user`. SQLite and an embedded Derby take no password and an embedded H2 is
+conventionally given `""`: a `""` the host wrote is a value it chose, whereas requiring a
+non-empty one would force the host to invent exactly the value this paragraph forbids.
+`nil` and a missing key fail.
+
+**`:pool` takes `:max` and `:timeout-ms`, both required, neither defaulted.** The timeout
+bounds every acquisition, and it is not left to the pool's own default, because then the
+guarantee below would depend on which pool sat underneath and on what its authors
+thought a sensible wait was.
 
 **`:migrations` is required, and refusing them is a value it takes, not a key left
 out.** Optional-with-a-default is the trap: a host that types `:migration` would get a
@@ -171,10 +181,11 @@ REPL that cannot restart is a REPL nobody uses.
 reachable, over `java.sql.Connection.isValid`, and it never throws. Not `SELECT 1`:
 that statement is rejected by HSQLDB and by Derby, and `SELECT 1 FROM DUAL` is rejected
 by HSQLDB, Derby and SQLite, so **there is no portable readiness query** and the
-one-line version in the host is a dialect table by the back door. The timeout is
-validated as a non-negative integer before the call, the same shape as web-base's
-`:port`: `isValid(0)` means no timeout at all, which is a hang, and a negative one
-throws on HSQLDB and on Derby.
+one-line version in the host is a dialect table by the back door. The timeout is in
+seconds, as `isValid` takes it, and is validated as a **positive** integer before the
+call: `isValid(0)` means no timeout at all, which is a hang, and a negative one throws on
+HSQLDB and on Derby. This is deliberately not web-base's `:port` check, which accepts
+zero because port 0 means an ephemeral port; here zero means no deadline.
 
 **Failure arrives within a bounded time.** Acquiring a connection is a blocking call,
 and a boot that waits forever is a hang, not a boot — the same reason web-base forces
@@ -218,10 +229,14 @@ What this library owns is the *running*, not the *writing*: it finds a directory
 host names, applies what has not been applied, in order, once, recording what it did.
 The SQL inside is the host's and speaks the host's engine.
 
-**Applying zero migrations from a directory the host named is an error, not success.**
+**Finding zero migrations in a directory the host named is an error, not success.**
 An empty or misspelt directory is the schema one deploy behind, arriving silently and
-reporting itself later as a bug somewhere else. A run that migrated nothing must say so
-loudly, the same way a test run that ran no tests is a red.
+reporting itself later as a bug somewhere else. A run that found nothing must say so
+loudly, the same way a test run that ran no tests is a red. **Zero *pending* is not that
+case**: a second boot finds every migration already recorded, applies none, and succeeds
+with `:migrations-applied 0`, which is what §6 says zero means. The count that must not be
+zero is the count found, and checking it on every boot is what catches a directory
+misspelt after the first one.
 
 **What a failure at migration N leaves behind.** Without this the section cannot be
 tested at all: any assertion would be inventing the bound it claims to check. The floor,
