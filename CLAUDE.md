@@ -15,33 +15,49 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 ## Project state
 
-**Specification settled 2026-09-09, made executable 2026-09-11; still no code.** No
-build or test command is recorded here, because none has been run. Commands go in this
-file **only once they have actually been run and observed to work**, never from
-convention. That applies with particular force to the two choices SPEC §11 leaves open,
-the pool and the migration library: neither is picked from habit.
+**Specification settled 2026-09-09; `start` and `stop` written 2026-09-12.** Commands go
+in this file **only once they have actually been run and observed to work**, never from
+convention. Observed:
+
+    clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."
+    clojure -M:test -n <namespace>         # one namespace
+    clojure -M:test -v <namespace>/<var>   # one test
+
+`clojure -M:test -e '…'` does **not** evaluate: `:test`'s `:main-opts` hand the arguments
+to the test runner, which reads `-e` as `--exclude` and runs the tests as usual — the form
+is silently never evaluated (observed 2026-09-12: the tests ran, the form printed nothing).
+To evaluate against the test classpath, run `java -cp "$(clojure -Spath -M:test)"
+clojure.main -e '…'` from the repository root, whose relative `src` and `test` entries the
+classpath needs (observed 2026-09-12), remembering that this skips `:test`'s `:jvm-opts`.
+
+**Tools, chosen by the user from measurements run 2026-09-11** (numbers in the session's
+memory, not re-derived here): HikariCP 7.1.0 as the pool, with fail-fast initialisation
+off because its default constructor connects with no deadline; ragtime.next-jdbc 0.12.1
+for migrations, which has no lock, so db-base writes its own (not yet designed); H2
+2.5.250 and SQLite 3.53.4.0 as the strict and permissive test engines. Rejected with
+measured reasons: c3p0 (prints the JDBC URL through JUL), dbcp2 and Agroal (neither bounds
+the caller against a silent socket), migratus (an orphan reservation row stops every later
+run silently) and Flyway (a failure on a non-transactional-DDL engine needs `repair`).
 
 ## Active work
 
-The specification is executable and has not been executed. **The next step is code, not
-more specification** — SPEC §11's two open choices cannot be closed on paper, because a
-tool is recorded here only after being run.
-
-- [ ] `deps.edn`: Clojure, `next.jdbc`, and the two test engines on `:test` only.
-- [ ] `src/dev/arkaitz/db_base.clj`: `start`, `stop`, `ready?`, as SPEC §6 specifies.
-- [ ] Choose the pool by running it; record the command that worked. **The agent picks
-      the candidates, runs them and reports measurements; the decision is the user's**
-      (settled 2026-09-11). For a pool that means the transitive closure in bytes, a
-      bounded acquisition timeout as §6 requires, a clean stop, and whether it drags a
-      logging backend — which §3 forbids. For the migration library, §7 already states
-      the two requirements.
-- [ ] One trial migration, verifying §7's failure class — a failure at N leaves 1..N-1
-      applied and recorded, N unrecorded, `start` throws naming N, next boot retries N.
+- [x] `deps.edn`: Clojure, HikariCP and ragtime.next-jdbc in `:deps`; the two test
+      engines on `:test` only. `next.jdbc` is not declared, because db-base does not call
+      it; ragtime brings it.
+- [x] `src/dev/arkaitz/db_base.clj`: `start` and `stop` as SPEC §6 specifies, with the
+      configuration refused before anything opens, the pool bounded and closed on every
+      failure, and the structure scans of §3, §5 and §9.
+- [ ] `ready?`, as SPEC §6 specifies.
+- [x] Choose the pool and the migration library by running them (above).
+- [ ] Migrations inside `start`, verifying §7's failure class — a failure at N leaves
+      1..N-1 applied and recorded, N unrecorded, `start` throws naming N, next boot
+      retries N — with a lock of db-base's own, whose design goes to the user first.
 - [ ] The two-engine test with its positive control: the proof of §3.
-- [ ] **The engine is unchosen.** The 2026-09-11 discussion leaned PostgreSQL —
-      `DELETE … RETURNING` makes auth-base's `take-challenge!` atomic in one statement —
-      but §3 still requires agnosticism and nothing was written. Naming it is a §3 edit
-      plus §8's column types, and needs an explicit decision.
+- [ ] **The production engine is unchosen.** The test engines are H2 and SQLite; the
+      2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes
+      auth-base's `take-challenge!` atomic in one statement — but §3 still requires
+      agnosticism. Naming it is a §3 edit plus §8's column types, and needs an explicit
+      decision.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -102,6 +118,18 @@ is any code to break.**
   ran no tests: the count is the signal.
 - **A sweeper on a timer.** A background thread is a lifecycle the host did not ask
   for and a shutdown path that gets forgotten. SPEC §9.
+- **H2's wrong-password delay is JVM-global.** Each refused login doubles a static delay
+  and the next correct login anywhere sleeps part of it, so one test's wrong password
+  made another test's one-second borrow fail at random. `:test` sets
+  `-Dh2.delayWrongPasswordMin=0`; a JVM started without it (a REPL, `java -cp`) re-arms it,
+  and the wrong-password test's witness says so. Never `delayWrongPasswordMax=0`, which
+  means no maximum.
+- **HikariCP keeps the login timeout on `DriverManager`, which the whole JVM shares.** A
+  pool's close waits for the login timeout of the last pool constructed, so timing tests
+  keep their timeouts within the same whole second.
+- **What HikariCP and the driver read on their own is the host's JVM.**
+  `hikaricp.configurationFile` configures the pool from a file, and a driver reads its
+  own files; SPEC §6 records both as the host's and db-base refuses neither.
 
 ## Where the boundary is expected to erode
 

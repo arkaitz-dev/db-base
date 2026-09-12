@@ -1,0 +1,30 @@
+{:paths ["src"]
+
+ ;; SPEC §3: a consumer receives a pool and a migration runner, and nothing else.
+ ;; Chosen 2026-09-11 from measurements, recorded in CLAUDE.md. HikariCP brings
+ ;; slf4j-api, a facade that logs nowhere unless the host supplies a backend;
+ ;; ragtime.next-jdbc brings next.jdbc, which db-base itself does not call.
+ ;; `structure_test.clj` enforces what src/ may reach.
+ :deps {org.clojure/clojure               {:mvn/version "1.12.5"}
+        com.zaxxer/HikariCP               {:mvn/version "7.1.0"}
+        dev.weavejester/ragtime.next-jdbc {:mvn/version "0.12.1"}}
+
+ :aliases
+ ;; SPEC §3 is proven against two engines from different dialect families, one
+ ;; strict and one permissive, embedded and never in :deps.
+ {:test {:extra-paths ["test" "test/resources"]
+         :extra-deps  {io.github.cognitect-labs/test-runner
+                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                       com.h2database/h2      {:mvn/version "2.5.250"}
+                       org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}}
+         ;; H2's brute-force delay is JVM-global: every refused login doubles it and
+         ;; the next correct login anywhere sleeps a random part of it
+         ;; (org.h2.engine.Engine.validateUserAndPassword), so one test that logs in
+         ;; wrongly slows whichever test connects next. It is a static final read once,
+         ;; when H2 first initialises, so it has to be set before any code touches H2 —
+         ;; for a test run, on the JVM's command line. Decided by a review panel over
+         ;; resetting it from a test, which a pool left alive re-arms. H2 is a test
+         ;; engine here; no consumer receives this.
+         :jvm-opts    ["-Dh2.delayWrongPasswordMin=0"]
+         :main-opts   ["-m" "cognitect.test-runner" "-d" "test"]
+         :exec-fn     cognitect.test-runner.api/test}}}

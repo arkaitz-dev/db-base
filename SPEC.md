@@ -119,7 +119,8 @@ Neither needs a query builder chosen for them.
 - configuration, as a map, already resolved. It never reads a file, never reads an
   environment variable, and never looks for either. web-base learned that lesson
   explicitly: a library that knows a filename can look for it, and then the directory
-  a process started from decides which database it opens.
+  a process started from decides which database it opens. What the pool it hands back
+  and the host's driver read on their own is another matter, and §6 says whose that is.
 - a place to find migrations.
 
 **It never learns**
@@ -162,7 +163,14 @@ non-empty one would force the host to invent exactly the value this paragraph fo
 **`:pool` takes `:max` and `:timeout-ms`, both required, neither defaulted.** The timeout
 bounds every acquisition, and it is not left to the pool's own default, because then the
 guarantee below would depend on which pool sat underneath and on what its authors
-thought a sensible wait was.
+thought a sensible wait was. **It is at least 250 milliseconds**: that is HikariCP's default
+floor, below which it throws and at zero it means no deadline at all, and it is refused
+here as a named key rather than surfacing as the pool's own exception. A JVM started with
+`com.zaxxer.hikari.timeoutMs.floor` raised makes the pool refuse more than that; the
+refusal still arrives as `ex-info` under the same key, with the pool's exception kept.
+Neither key is unbounded above: `:max` is at most 2147483647, because HikariCP's setter
+takes an `int`, and `:timeout-ms` at most 2147483646, because HikariCP casts its timeouts
+to `int` and reads `Integer.MAX_VALUE` itself as no deadline at all.
 
 **`:migrations` is required, and refusing them is a value it takes, not a key left
 out.** Optional-with-a-default is the trap: a host that types `:migration` would get a
@@ -218,6 +226,31 @@ three lines. Either way what reaches `start` is the map of §5, and this library
 learns a filename. auth-base draws the same line for its bootstrap list — it arrives as
 data the host passes in — and drawing it is exactly what lets both modules compose with
 web-base without either depending on it.
+
+**What the pool and the driver read on their own belongs to the host's JVM.** The promise
+above is this library's: it reads no file, no environment and no property to find its
+configuration. The component it hands back is not so quiet, and saying otherwise would be
+a promise no JDBC stack can keep. HikariCP honours `hikaricp.configurationFile` when the
+JVM sets it — a properties file that can set anything this library does not set on the
+pool, `connectionInitSql` and `dataSourceClassName` included — and a dozen other JVM
+properties; a driver reads its own files by name, pgjdbc its `driverconfig.properties`,
+`.pgpass` and `pg_service.conf`. This library neither reads nor refuses them, for the
+reason §3 leaves the driver to the host: they configure the JVM and the driver the host
+brought. A host that sets one gets the pool it asked its JVM for, which is not
+necessarily the one the map describes: a `dataSourceClassName` from the file replaces the
+map's URL with no more than a HikariCP warning, which only a host that brought a logging
+backend hears. The map's user and password are not replaced that way on the JDBC-URL path
+this library configures: it always sets them, HikariCP asks for every connection with
+them, and its driver data source puts them over any `dataSource.user` or
+`dataSource.password` the file names. A `credentialsProviderClassName` from the file does
+replace them, with no warning at all: HikariCP then asks the provider instead of the map.
+The host's JVM is also where a failure may arrive other than as `ex-info`, after the map
+has been validated: a `hikaricp.configurationFile` that cannot be found, read or applied
+makes HikariCP throw its own exception before this library has set anything on the pool,
+and one that loads but describes a pool HikariCP refuses fails when the pool is
+constructed; neither is wrapped. A file that builds a pool whose every connection then
+fails does arrive as `ex-info`, as the connection failure it causes. (Decided with the
+user on 2026-09-12, after a review panel weighed refusing the property at `start`.)
 
 ## 7 · Migrations
 
