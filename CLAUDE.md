@@ -33,8 +33,9 @@ classpath needs (observed 2026-09-12), remembering that this skips `:test`'s `:j
 **Tools, chosen by the user from measurements run 2026-09-11** (numbers in the session's
 memory, not re-derived here): HikariCP 7.1.0 as the pool, with fail-fast initialisation
 off because its default constructor connects with no deadline; ragtime.next-jdbc 0.12.1
-for migrations, which has no lock, so db-base writes its own (not yet designed); H2
-2.5.250 and SQLite 3.53.4.0 as the strict and permissive test engines. Rejected with
+for migrations, which has no lock, so db-base writes its own (designed from measurements
+2026-09-14, SPEC §7); H2 2.5.250 and SQLite 3.53.4.0 as the strict and permissive test
+engines. Rejected with
 measured reasons: c3p0 (prints the JDBC URL through JUL), dbcp2 and Agroal (neither bounds
 the caller against a silent socket), migratus (an orphan reservation row stops every later
 run silently) and Flyway (a failure on a non-transactional-DDL engine needs `repair`).
@@ -54,7 +55,7 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 - [x] Choose the pool and the migration library by running them (above).
 - [ ] Migrations inside `start`, verifying §7's failure class — a failure at N leaves
       1..N-1 applied and recorded, N unrecorded, `start` throws naming N, next boot
-      retries N — with a lock of db-base's own, whose design goes to the user first.
+      retries N — under the lock SPEC §7 records (decided with the user 2026-09-14).
 - [ ] The two-engine test with its positive control: the proof of §3.
 - [ ] **The production engine is unchosen.** The test engines are H2 and SQLite; the
       2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes

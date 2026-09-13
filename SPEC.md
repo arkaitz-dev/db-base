@@ -48,10 +48,12 @@ function assumes `jsonb` or `LISTEN`, the library belongs to one engine.
 
 **And nearly all of that agnosticism is free.** The pool takes a JDBC URL, the migration
 run hands the host's SQL to a library, and readiness is `Connection.isValid` — none of
-the three can be engine-shaped, because JDBC and the JDK are doing the work. **The only
-place this library writes SQL of its own is §8**: one table and five statements. So the
-discipline costs something in exactly one place, and it is worth saying because it
-decides what choosing an engine would change here — almost nothing. The engine matters
+the three can be engine-shaped, because JDBC and the JDK are doing the work. **Only two
+places write SQL of this library's own**: §7's migration lock — one table, the ANSI
+statements that create, take and give it back, and the read of the control table that
+decides whether to take it — and §8, one table and five statements. So the discipline
+costs something in exactly two places, and it is worth saying because it decides what
+choosing an engine would change here — almost nothing. The engine matters
 in the host's SQL and in the adapter auth-base writes over the datasource this library
 handed it, and neither of those is this library's to decide.
 
@@ -138,7 +140,7 @@ functions returning a plain map, the shape web-base's server already has.
                    :user       …
                    :password   …
                    :pool       {:max 10 :timeout-ms 5000}
-                   :migrations {:dir "db/migration"}}))   ; or :migrations :none
+                   :migrations {:dir "db/migration" :lock-wait-ms 60000}})) ; or :migrations :none
 ;; => {:datasource … :migrations-applied n}
 (db/ready? db 2)                                          ; => true / false
 (db/stop db)
@@ -178,7 +180,10 @@ to `int` and reads `Integer.MAX_VALUE` itself as no deadline at all.
 out.** Optional-with-a-default is the trap: a host that types `:migration` would get a
 pool with no migrations and no complaint, which is the incident described two paragraphs
 above. `:migrations-applied` is then **absent from the handle, not zero** — zero says
-they ran and there was nothing to do, absent says they did not run.
+they ran and there was nothing to do, absent says they did not run. A map takes `:dir`,
+the classpath prefix the migrations live under, and `:lock-wait-ms`, how long a boot
+waits for another instance to finish migrating; both are required and neither is
+defaulted: the prefix for §5's reason, the wait for §7's.
 
 **One function, not two.** `start` opens the pool and runs the migrations in the same
 call. A separate `migrate!` turns §7 into "they run if the host remembers", and a pool
@@ -283,17 +288,40 @@ user on 2026-09-12, after a review panel weighed refusing the property at `start
 fail.** A database whose shape is one deploy behind the code is a corruption that
 reports itself as a bug somewhere else entirely.
 
-What this library owns is the *running*, not the *writing*: it finds a directory the
-host names, applies what has not been applied, in order, once, recording what it did.
-The SQL inside is the host's and speaks the host's engine.
+What this library owns is the *running*, not the *writing*: it finds the migrations under
+a classpath prefix the host names, applies what has not been applied, in order, once,
+recording what it did. The SQL inside is the host's and speaks the host's engine.
 
-**Finding zero migrations in a directory the host named is an error, not success.**
-An empty or misspelt directory is the schema one deploy behind, arriving silently and
+**The source is a classpath prefix, not a directory on disk.** A path on disk resolves
+against the directory a process started from, which is exactly what §5 forbids from
+deciding anything, and an uberjar has no disk to look at. A host whose migrations live in
+a directory puts that directory on its classpath. What a prefix means is ragtime's:
+
+- only the files directly under it count, not those in its subdirectories;
+- every classpath root holding the prefix contributes, so two jars that both carry it
+  merge;
+- it is looked up through the context class loader of the thread that calls `start`;
+- a jar built without directory entries answers nothing for it, which the next paragraph
+  turns into a boot that fails.
+
+Migrations are ragtime's files: SQL in an `up` file with an optional `down` beside it, or
+EDN, identified by name and applied in the string order of those names, so numbers are
+zero-padded. A `down` never runs here. An EDN migration may name a function instead of
+SQL; it runs with the datasource, and it is the host's code. Two migrations that load
+under one id — an SQL file and an EDN file named alike — or a source that cannot be read
+stop the boot before any pool exists, naming what was wrong. Two SQL files of one name
+under two classpath roots are not that case: ragtime loads them as a single migration
+that runs both files' statements, and nothing after loading can tell. The host's
+run records what it applied in `ragtime_migrations`, ragtime's own default, so a host
+that already used ragtime keeps its history. (Decided with the user on 2026-09-13.)
+
+**Finding zero migrations under a prefix the host named is an error, not success.**
+An empty or misspelt prefix is the schema one deploy behind, arriving silently and
 reporting itself later as a bug somewhere else. A run that found nothing must say so
 loudly, the same way a test run that ran no tests is a red. **Zero *pending* is not that
 case**: a second boot finds every migration already recorded, applies none, and succeeds
 with `:migrations-applied 0`, which is what §6 says zero means. The count that must not be
-zero is the count found, and checking it on every boot is what catches a directory
+zero is the count found, and checking it on every boot is what catches a prefix
 misspelt after the first one.
 
 **What a failure at migration N leaves behind.** Without this the section cannot be
@@ -305,14 +333,60 @@ throws naming N, and the next boot attempts N again.** A migration that half-app
 an engine without transactional DDL is a repair the host performs, not a state this
 library pretends to unwind.
 
-**Which migration library sits underneath is not settled here.** It is a real decision
-with two or three defensible answers, and this workspace's rule is that tools are
-recorded once they have been run and observed, never chosen from convention. Two
-requirements constrain the choice without making it, and both come from rules already
-written down. It must support **two independent runs, with different control tables and
-different sources** — §8 explains why there are two. And its lock must offer a
-**bounded wait**: two instances booting at once is the ordinary case, and a lock without
-a deadline turns it into a hang.
+**An applied migration the source no longer has, or a new one that sorts before the last
+one applied, stops the boot**, naming it: the first is a history this code does not
+know, the second a change the database would receive out of order. The check compares
+sets and the source's order, never the order the control table returns, because ragtime
+orders applied ids by a timestamp in milliseconds: measured, H2 recorded two or three
+migrations within one millisecond in 43 runs of 50, and when such ties come back in
+another order, ragtime's own check reports a conflict that is not there, on both test
+engines. (Decided with the user on 2026-09-14.)
+
+**The migration library underneath is ragtime**, chosen by measurement rather than
+convention, with the measured reasons in `CLAUDE.md`. Two requirements constrained the
+choice, and both come from rules already written down. It must support **two independent runs, with
+different control tables and different sources** — §8 explains why there are two. And
+the run must sit under a lock with a **bounded wait**: two instances booting at once is
+the ordinary case, and a lock without a deadline turns it into a hang.
+
+**The lock is this library's, because the library underneath has none**: measured, two
+concurrent runs applied the same data migration twice, six times out of six. It is one
+row in `db_base_migration_lock` — `id VARCHAR(64)` primary key naming the control table,
+`holder VARCHAR(36)`, `acquired_at BIGINT` in epoch milliseconds — taken with an `INSERT`
+and given back with a `DELETE` of that holder's row, in ANSI SQL, with no transaction held
+open. A boot takes it only when the control table shows something pending — read with a
+`SELECT` of this library's, because ragtime's own read creates the table, which must
+happen under the lock — and the run reads the control table again under the lock before
+it applies anything. **The wait is
+`[:migrations :lock-wait-ms]`**, required and not defaulted, because waiting for another
+instance to finish migrating is not waiting for a connection: a boot that cannot take the
+lock within it fails naming the holder and when it took the lock. On an engine that gives
+one writer the whole file, the wait can stretch by the driver's own busy timeout and end
+in taking the lock rather than failing — measured on SQLite, a one-second wait against a
+holder inside a write transaction ended 1.75 to 1.77 seconds late, ten times out of ten,
+with the lock taken and nothing left to apply — and never in a second apply.
+
+**What a crash leaves.** The row has no expiry, on purpose. An expiring lease hands a
+migration still running to a second instance, which applies it again: measured ten times
+out of ten on both test engines, with a one-second lease and a three-second migration. So
+a process killed while it holds the lock leaves the row, and every later boot fails loudly
+within its wait, naming that holder, until an operator who knows the process is dead
+deletes it: `DELETE FROM db_base_migration_lock WHERE id = 'ragtime_migrations'` for the
+host's run, with §8's control table named instead for the library's. It is
+the repair this section already gives a migration that half-applied, which such a crash
+may also have left. A boot with nothing pending never takes the lock, so a crash during
+an ordinary restart leaves nothing behind. The row lock held by an open transaction,
+which heals itself, was measured too and cannot work here: on SQLite it blocks the
+migrations it protects — every write on another connection failed at the driver's
+three-second busy timeout — and on H2 the first DDL statement commits it away.
+(Decided with the user on 2026-09-14, from these measurements.)
+
+**The lock table is created without `IF NOT EXISTS`**, which Derby rejects: a probe, the
+`CREATE`, and a second probe when the `CREATE` fails, which absorbed two concurrent
+creators 200 times out of 200, and two cold boots 50 times out of 50, on both test
+engines. Its columns can never change, because it
+exists before any migration could record a version of it: a different shape would be a
+different name.
 
 ## 8 · The session store it ships
 
@@ -486,7 +560,8 @@ until the first request meets a missing table.
 | Configuration arrives as a map; it never reads a file or an environment | §5 |
 | The connection details live in an EDN outside the repository, read by the host | §6 |
 | It may implement a third party's port, never depend on a sibling of ours | §3, §8 |
-| Migrations run at boot or the process does not serve; zero applied is an error | §7 |
+| Migrations run at boot or the process does not serve; zero found is an error | §7 |
+| The pool is HikariCP; migrations run on ragtime, under a lock of this library's own | §6, §7 |
 | A stored session store ships here, with its own table and its own control table | §8 |
 | The store never upserts, and a zero-row update is correct | §8 |
 | §3 is proven against two engines, not by review | §3 |
@@ -495,9 +570,6 @@ until the first request meets a missing table.
 
 **Open**
 
-- **The pool** and **the migration library** underneath. Both are real choices and
-  neither is made from convention. §7 states the two requirements the migration library
-  must meet, which constrain the choice without making it.
 - **Which two engines** the suite runs against. §3 states what the pair must satisfy;
   the names go in `CLAUDE.md` once they have been run.
 - **Reclaiming expired rows**: on write, or by an operator calling a function this
