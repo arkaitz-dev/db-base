@@ -15,9 +15,9 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 ## Project state
 
-**Specification settled 2026-09-09; `start` and `stop` written 2026-09-12.** Commands go
-in this file **only once they have actually been run and observed to work**, never from
-convention. Observed:
+**Specification settled 2026-09-09; `start` and `stop` written 2026-09-12, `ready?`
+2026-09-13.** Commands go in this file **only once they have actually been run and
+observed to work**, never from convention. Observed:
 
     clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."
     clojure -M:test -n <namespace>         # one namespace
@@ -47,7 +47,10 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 - [x] `src/dev/arkaitz/db_base.clj`: `start` and `stop` as SPEC §6 specifies, with the
       configuration refused before anything opens, the pool bounded and closed on every
       failure, and the structure scans of §3, §5 and §9.
-- [ ] `ready?`, as SPEC §6 specifies.
+- [x] `ready?`, as SPEC §6 specifies: the handle and the timeout refused before it
+      borrows, everything from the borrow on answered as true or false with an `Error`
+      excepted, and its time bound left to the driver (decided with the user 2026-09-13,
+      after measuring both).
 - [x] Choose the pool and the migration library by running them (above).
 - [ ] Migrations inside `start`, verifying §7's failure class — a failure at N leaves
       1..N-1 applied and recorded, N unrecorded, `start` throws naming N, next boot
@@ -130,6 +133,11 @@ is any code to break.**
 - **What HikariCP and the driver read on their own is the host's JVM.**
   `hikaricp.configurationFile` configures the pool from a file, and a driver reads its
   own files; SPEC §6 records both as the host's and db-base refuses neither.
+- **H2 over TCP ignores `isValid`'s timeout and `setNetworkTimeout`.** Against a
+  server that stops answering, `ready?` and any borrow of a connection idle for more than
+  500 ms block until a `NETWORK_TIMEOUT` in the URL expires — still blocked after 12 s
+  without one (measured 2026-09-13). A test that needs H2 to fail fast stops the server,
+  which closes its sockets, rather than silencing it.
 
 ## Where the boundary is expected to erode
 

@@ -38,9 +38,6 @@
            [javax.sql DataSource]
            [org.h2.engine SysProperties]))
 
-(defn- h2-memory-url [label]
-  (str "jdbc:h2:mem:" label "-" (random-uuid) ";DB_CLOSE_DELAY=-1"))
-
 (defn- query-ints [^Connection c sql]
   (with-open [s (.createStatement c)
               ^ResultSet rs (.executeQuery s sql)]
@@ -52,7 +49,7 @@
 (deftest start-returns-a-handle-whose-datasource-is-live-and-stop-closes-it--h2
   ;; :max 2 and 1250 ms are HikariCP's default of neither, so a pool that ignored
   ;; either key could not pass by coincidence.
-  (let [cfg    {:jdbc-url (h2-memory-url "lifecycle") :user "" :password ""
+  (let [cfg    {:jdbc-url (ts/h2-memory-url "lifecycle") :user "" :password ""
                 :pool {:max 2 :timeout-ms 1250} :migrations :none}
         before (ts/pool-number)
         handle (db/start cfg)
@@ -150,7 +147,7 @@
       (finally (close!)))))
 
 (deftest an-unreachable-database-fails-start-within-a-bound-with-the-driver-exception-kept--wrong-password
-  (let [url    (h2-memory-url ts/url-sentinel)
+  (let [url    (ts/h2-memory-url ts/url-sentinel)
         right  (str ts/password-sentinel "-right")
         cfg    {:jdbc-url url :user ts/user-sentinel :password right
                 :pool {:max 1 :timeout-ms 1250} :migrations :none}]

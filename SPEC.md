@@ -161,8 +161,10 @@ non-empty one would force the host to invent exactly the value this paragraph fo
 `nil` and a missing key fail.
 
 **`:pool` takes `:max` and `:timeout-ms`, both required, neither defaulted.** The timeout
-bounds every acquisition, and it is not left to the pool's own default, because then the
-guarantee below would depend on which pool sat underneath and on what its authors
+bounds every wait for a connection, and the liveness check HikariCP makes through the
+driver before lending one that sat idle only as far as the driver honours the same
+number, as `ready?` below says. It is not left to the pool's own default, because then
+the guarantee below would depend on which pool sat underneath and on what its authors
 thought a sensible wait was. **It is at least 250 milliseconds**: that is HikariCP's default
 floor, below which it throws and at zero it means no deadline at all, and it is refused
 here as a named key rather than surfacing as the pool's own exception. A JVM started with
@@ -186,18 +188,41 @@ that must not migrate is the thirty lines §12 talks about, written in the host.
 REPL that cannot restart is a REPL nobody uses.
 
 **`ready?` takes its timeout and has no default.** It answers whether the database is
-reachable, over `java.sql.Connection.isValid`, and it never throws. Not `SELECT 1`:
+reachable, over `java.sql.Connection.isValid`, and past the two refusals below it throws
+nothing but an `Error`: a borrow that fails, an `isValid` that throws and a connection
+that cannot be given back all answer false. Not `SELECT 1`:
 that statement is rejected by HSQLDB and by Derby, and `SELECT 1 FROM DUAL` is rejected
 by HSQLDB, Derby and SQLite, so **there is no portable readiness query** and the
 one-line version in the host is a dialect table by the back door. The timeout is in
 seconds, as `isValid` takes it, and is validated as a **positive** integer before the
 call: `isValid(0)` means no timeout at all, which is a hang, and a negative one throws on
-HSQLDB and on Derby. This is deliberately not web-base's `:port` check, which accepts
-zero because port 0 means an ephemeral port; here zero means no deadline.
+HSQLDB, on Derby and on pgjdbc. This is deliberately not web-base's `:port` check, which
+accepts zero because port 0 means an ephemeral port; here zero means no deadline. The
+largest is 2147483647, because `isValid` takes an `int`. A timeout it refuses arrives as `ex-info`
+under `:config-key [:timeout]`: the timeout is an argument rather than configuration, but
+a host that already dispatches on `:config-key` should not learn a second key for it. So
+does a handle whose `:datasource` is not a `javax.sql.DataSource`, under `:config-key
+[:datasource]` and without its value, which may be the configuration map, password and
+all: a readiness check wired to the wrong thing should say so rather than report the
+database down. (Decided with the user on 2026-09-13.)
 
-**Failure arrives within a bounded time.** Acquiring a connection is a blocking call,
+**The timeout bounds `ready?` only as far as the driver honours it.** `isValid` runs on
+the caller's thread, and so does the liveness check HikariCP makes through the driver
+before it lends a connection that sat idle, so what bounds both is the driver and the
+host's URL. pgjdbc applies the timeout to its socket, unless the URL's `socketTimeout` is
+already shorter; H2 ignores it, and over TCP a server that stops answering holds the call
+until a `NETWORK_TIMEOUT` in the URL expires — still blocked after 12 seconds without one,
+back in 2 with `NETWORK_TIMEOUT=2000`. Bounding the caller from here would take a thread
+of this library's per call, and during such an outage up to `:max` of them stuck, holding
+every connection of the pool until the driver lets go. (Decided with the user on 2026-09-13, after measuring both.)
+
+**A boot fails within a bounded time.** Acquiring a connection is a blocking call,
 and a boot that waits forever is a hang, not a boot — the same reason web-base forces
-`:join? false`.
+`:join? false`. `start` borrows the moment the pool exists, and `[:pool :timeout-ms]`
+bounds that wait, measured against a socket that accepts and never answers; the failure
+then leaves `start` after HikariCP's wait to close the pool, which `start`'s docstring
+quantifies. A later borrow and `ready?` are bounded only as far as the paragraphs above
+say.
 
 **Failure is `ex-info`.** The message names the offending thing, the data carries
 `:config-key` as a vector path, and a driver's own exception is kept as `ex-cause`
@@ -481,7 +506,8 @@ until the first request meets a missing table.
 
 **Measured, but not settled — the residue.** Both are the kind of trap this document
 writes down before there is code: whether a real network driver honours the `isValid`
-timeout when a socket accepts and never answers, which the embedded engines cannot show;
+timeout when a socket accepts and never answers — H2 over TCP was measured and does not
+(§6), and pgjdbc's handling was read in its source but not run against such a socket;
 and whether `UUID/randomUUID` is safe under a native image, since the JDK holds that
 `SecureRandom` where a scan of our own var roots cannot see it.
 

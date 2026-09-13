@@ -25,6 +25,12 @@
   (try (f) ::no-throw
        (catch Exception e e)))
 
+(defn h2-memory-url
+  "A private in-memory H2 database that outlives its last connection, so a pool that
+  closes every connection does not empty it."
+  [label]
+  (str "jdbc:h2:mem:" label "-" (random-uuid) ";DB_CLOSE_DELAY=-1"))
+
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")
 (def password-sentinel "PASSWORD-SENTINEL-7f3a")

@@ -1,7 +1,8 @@
 (ns dev.arkaitz.db-base
   "A pooled connection with a lifecycle (SPEC §6). `start` takes a map and returns
-  a plain map, `stop` closes what `start` opened. Nothing here lives in a var
-  root: the handle is the only state there is.
+  a plain map, `stop` closes what `start` opened, and `ready?` asks whether the
+  database answers. Nothing here lives in a var root: the handle is the only state
+  there is.
 
   **Configuration is refused before anything opens.** A pool that silently
   defaults to something is a production incident with no symptom in
@@ -13,7 +14,7 @@
   driver's. The pool's own exception for a URL no driver accepts echoes the URL,
   so that case is decided here, through `DriverManager`, before the pool sees it.
 
-  **Failure arrives within a bounded time.** The pool is HikariCP, chosen by
+  **A boot fails within a bounded time.** The pool is HikariCP, chosen by
   measurement (CLAUDE.md). Its default constructor opens a connection on the
   caller's thread with no deadline — measured past 30 s against a socket that
   accepts and never answers — so fail-fast initialisation is switched off and
@@ -27,7 +28,8 @@
   `hikaricp.configurationFile` when the JVM sets it, and a driver reads its own
   files, and neither is refused here."
   (:import [com.zaxxer.hikari HikariConfig HikariDataSource]
-           [java.sql Connection DriverManager SQLException]))
+           [java.sql Connection DriverManager SQLException]
+           [javax.sql DataSource]))
 
 (def ^:private config-keys #{:jdbc-url :user :password :pool :migrations})
 
@@ -135,11 +137,14 @@
     (HikariDataSource. hikari)))
 
 (defn- close-after-failure!
-  "Closes the pool without letting a failure to close replace the failure that
+  "Closes `resource` without letting a failure to close replace the failure that
   made closing necessary."
-  [^HikariDataSource ds ^Throwable failure]
-  (try (.close ds)
-       (catch Throwable t (.addSuppressed failure t))))
+  [^java.lang.AutoCloseable resource ^Throwable failure]
+  (try (.close resource)
+       (catch Throwable t
+         ;; A resource that rethrows the very failure it was closed for: a throwable
+         ;; cannot suppress itself, and trying would throw instead.
+         (when-not (identical? t failure) (.addSuppressed failure t)))))
 
 (defn start
   "Validates `config`, opens the pool and borrows one connection before
@@ -188,3 +193,48 @@
   "Closes the pool behind a handle returned by `start`."
   [{:keys [datasource]}]
   (.close ^HikariDataSource datasource))
+
+(defn ready?
+  "Whether the database answers, through `java.sql.Connection/isValid` on a
+  connection borrowed from the handle's pool. `timeout` is in seconds, as `isValid`
+  takes it, and is an integer from 1 to 2147483647: zero is `isValid`'s no deadline.
+
+  Returns true or false, and throws `ex-info` only for what it refuses before
+  borrowing: a handle whose `:datasource` is not a `javax.sql.DataSource`, under
+  `:config-key [:datasource]`, and a timeout out of range, under `:config-key
+  [:timeout]`. A borrow that fails, an `isValid` that throws and a connection that
+  cannot be given back all answer false. An `Error`, from `isValid` or from closing
+  the connection, is not an answer and propagates.
+
+  The timeout bounds the call only as far as the driver honours it (SPEC §6):
+  `isValid` runs on the caller's thread, and so does the check HikariCP makes through
+  the driver before lending a connection that sat idle. The wait for a free connection
+  is bounded by `[:pool :timeout-ms]`, and that check only as far as the driver honours
+  the same number, so a borrow can outlast the wait by one check; H2 over TCP ignores
+  both, and only `NETWORK_TIMEOUT` in the URL bounds it."
+  [handle timeout]
+  (let [datasource (:datasource handle)]
+    ;; Never echoed: what a mis-wired caller passed may be the configuration map.
+    (when-not (instance? DataSource datasource)
+      (fail! "ready? takes the handle start returned, whose :datasource is a javax.sql.DataSource"
+             [:datasource]))
+    (when-not (integer-between? 1 Integer/MAX_VALUE timeout)
+      (fail! (str "[:timeout] must be an integer from 1 to " Integer/MAX_VALUE " seconds")
+             [:timeout] timeout))
+    (try
+      (let [^Connection c (.getConnection ^DataSource datasource)
+            answer        (try (.isValid c (int timeout))
+                               (catch Throwable t
+                                 ;; Not with-open, whose finally lets whatever close
+                                 ;; throws replace t. An Error must outlive a close that
+                                 ;; fails; after an Exception, which is about to become
+                                 ;; false, an Error from close must get through.
+                                 (if (instance? Error t)
+                                   (close-after-failure! c t)
+                                   (.close c))
+                                 (throw t)))]
+        (.close c)
+        answer)
+      ;; A closed pool, a borrow that timed out and a driver's refusal all mean the
+      ;; database did not answer. An Error is not an answer, so it is not caught.
+      (catch Exception _ false))))
