@@ -43,7 +43,7 @@
             [resauce.core :as resauce])
   (:import [clojure.lang ExceptionInfo]
            [com.zaxxer.hikari HikariConfig HikariDataSource]
-           [java.sql Connection DriverManager SQLException]
+           [java.sql Connection DriverManager PreparedStatement ResultSet SQLException]
            [javax.sql DataSource]))
 
 (def ^:private config-keys #{:jdbc-url :user :password :pool :migrations})
@@ -56,6 +56,17 @@
   "The host's control table: ragtime's own default, so a host that already used ragtime
   keeps its history (SPEC §7)."
   "ragtime_migrations")
+
+(def ^:private lock-table
+  "This library's own table, written here and never generated (SPEC §7). It has to exist
+  before any migration could record a version of it, so its columns can never change: a
+  different shape would be a different name."
+  "db_base_migration_lock")
+
+(def ^:private lock-poll-ms
+  "How finely the wait for the lock is sliced. Nothing depends on it: what a boot waits
+  is `[:migrations :lock-wait-ms]`."
+  50)
 
 (def ^:private hikari-timeout-floor-ms
   "HikariCP's default floor: it throws `IllegalArgumentException` below this and turns
@@ -249,6 +260,109 @@
                                 id nil)))
     migrations))
 
+(defn- prepared ^PreparedStatement [^Connection c sql params]
+  (let [statement (.prepareStatement c ^String sql)]
+    (doseq [[i p] (map-indexed vector params)] (.setObject statement (int (inc i)) p))
+    statement))
+
+(defn- update!
+  "Runs one statement and returns how many rows it changed."
+  [^DataSource ds sql & params]
+  (with-open [c  (.getConnection ds)
+              st (prepared c sql params)]
+    (.executeUpdate st)))
+
+(defn- first-row
+  "The first row as a vector, or nil."
+  [^DataSource ds sql & params]
+  (with-open [c  (.getConnection ds)
+              st (prepared c sql params)
+              ^ResultSet rows (.executeQuery st)]
+    (when (.next rows)
+      (mapv #(.getObject rows (int %)) (range 1 (inc (.getColumnCount (.getMetaData rows))))))))
+
+(defn- readable? [ds table]
+  (try (first-row ds (str "SELECT COUNT(*) FROM " table)) true (catch SQLException _ false)))
+
+(defn- recorded-ids
+  "What the control table records, read with a `SELECT` of this library's own — never
+  through ragtime, whose read creates the table, and creating it belongs under the lock
+  (SPEC §7). `nil` when the table is not there, which is not the same as none recorded."
+  [^DataSource ds]
+  (try (with-open [c  (.getConnection ds)
+                   st (prepared c (str "SELECT id FROM " host-migrations-table) [])
+                   ^ResultSet rows (.executeQuery st)]
+         (loop [acc #{}] (if (.next rows) (recur (conj acc (.getString rows 1))) acc)))
+       (catch SQLException _ nil)))
+
+(defn- lock-table-ready!
+  "Probe, create, probe again. `CREATE TABLE IF NOT EXISTS` is not ANSI — Derby rejects
+  it — and two boots can race for the creation, which this absorbed 200 times out of 200
+  (measured, SPEC §7)."
+  [ds]
+  (when-not (readable? ds lock-table)
+    (try (update! ds (str "CREATE TABLE " lock-table " (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                          " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+         (catch SQLException e (when-not (readable? ds lock-table) (throw e))))))
+
+(defn- lock-held-elsewhere [dir wait-ms holder acquired-at]
+  (ex-info (str "db-base: another instance holds the migration lock" (when holder (str ": " holder))
+                (when acquired-at (str ", taken at " acquired-at " (epoch milliseconds)"))
+                ", and " wait-ms " ms of [:migrations :lock-wait-ms] were not enough. If that"
+                " instance is gone, the repair is: DELETE FROM " lock-table " WHERE id = '"
+                host-migrations-table "'")
+           (cond-> {:config-key [:migrations :lock-wait-ms] :value wait-ms :dir dir}
+             holder (assoc :holder holder)
+             acquired-at (assoc :acquired-at acquired-at))))
+
+(defn- take-lock-row!
+  "`true`, or the exception the INSERT threw. A primary key violation means someone else
+  holds it, and its SQLSTATE is not portable — SQLite leaves it null — so what says which
+  it was is the row, read when the wait runs out."
+  [ds holder]
+  (try (update! ds (str "INSERT INTO " lock-table " (id, holder, acquired_at) VALUES (?, ?, ?)")
+                host-migrations-table holder (System/currentTimeMillis))
+       true
+       (catch SQLException e e)))
+
+(defn- acquire-lock!
+  "Takes the lock, waiting at most `wait-ms`, and returns this boot's holder. A boot that
+  cannot take it fails naming the holder, when it took the lock, and the statement that
+  repairs one that died (SPEC §7)."
+  [ds dir wait-ms]
+  (let [holder   (str (random-uuid))
+        deadline (+ (System/nanoTime) (* 1000000 (long wait-ms)))]
+    (try
+      (lock-table-ready! ds)
+      (loop []
+        (let [taken (take-lock-row! ds holder)]
+          (cond
+            (true? taken) holder
+            (< (System/nanoTime) deadline) (do (Thread/sleep (long lock-poll-ms)) (recur))
+            :else
+            (let [[other acquired-at] (first-row ds (str "SELECT holder, acquired_at FROM " lock-table
+                                                         " WHERE id = ?")
+                                                 host-migrations-table)]
+              (cond
+                ;; The holder gave it back as the wait ran out.
+                (and (nil? other) (true? (take-lock-row! ds holder))) holder
+                ;; No row, and the insert still refuses: it was never another instance.
+                (nil? other) (throw taken)
+                :else (throw (lock-held-elsewhere dir wait-ms other acquired-at)))))))
+      (catch SQLException e
+        (throw (migration-failure dir (str "the lock table " lock-table
+                                           " could not be taken, read or created")
+                                  nil e))))))
+
+(defn- release-lock! [ds holder]
+  (update! ds (str "DELETE FROM " lock-table " WHERE id = ? AND holder = ?")
+           host-migrations-table holder))
+
+(defn- release-after-failure! [ds holder ^Throwable failure]
+  (try (release-lock! ds holder)
+       (catch Throwable t
+         (when-not (identical? t failure) (.addSuppressed failure t)))))
+
 (defn- plan-migrations
   "The ids to apply, in the source's order. Refuses a recorded id the source no longer
   has, and a pending one that sorts before the last applied. Computed from the recorded
@@ -271,7 +385,7 @@
                                   id nil))))
     pending))
 
-(defn- migrate!
+(defn- apply-pending!
   "Applies what is pending and returns how many it applied. A failure names the
   migration it happened in; everything before it stays applied and recorded, and it
   does not (SPEC §7). A migration that ran but could not then be recorded is reported
@@ -298,6 +412,38 @@
                  (migration-failure dir (str "migration " id " failed") id e)
                  (unread e)))))))
 
+(defn- migrate!
+  "Under the lock, and only when there is something to do: a boot whose control table
+  already records every migration takes no lock, so a crash during an ordinary restart
+  leaves no row behind (SPEC §7). A history that disagrees with the source is refused
+  here, before the lock, from this library's own read; what is pending is then read again
+  under the lock, by ragtime, before anything runs. A lock that cannot be given back is
+  a failure of the boot like any other, with the migrations already applied and recorded.
+  If the row survived whatever stopped the `DELETE`, it stays: the boots that follow with
+  nothing to apply never ask for the lock and never see it, and the first one that has a
+  migration to run names it (SPEC §7)."
+  [ds dir wait-ms migrations]
+  (let [recorded (recorded-ids ds)]
+    (if (and recorded (empty? (plan-migrations dir recorded migrations)))
+      0
+      (let [holder  (acquire-lock! ds dir wait-ms)
+            applied (try (apply-pending! ds dir migrations)
+                         (catch Throwable t
+                           (release-after-failure! ds holder t)
+                           (throw t)))]
+        (try (release-lock! ds holder)
+             (catch InterruptedException e (throw e))
+             (catch Exception e
+               ;; Which of the two it left — a row, or a lock table that is itself gone — is
+               ;; not knowable from here without another statement that can fail the same way.
+               (throw (ex-info (str "db-base: the migration run finished, but this boot's lock row could"
+                                    " not be given back. If it is still there, the repair is: DELETE FROM "
+                                    lock-table " WHERE id = '" host-migrations-table "' AND holder = '"
+                                    holder "'")
+                               {:config-key [:migrations :dir] :value dir :holder holder}
+                               e))))
+        applied))))
+
 (defn- borrow-once!
   "Borrows one connection and gives it back, so a database that cannot be reached
   fails the boot instead of the first request."
@@ -323,9 +469,12 @@
   Migration ids sort as strings, so numbers are zero-padded; a `down` never runs.
 
   Every failure is `ex-info` carrying `:config-key` as a vector path, and
-  `:migration-id` when one migration is to blame, except what the host's JVM makes
-  HikariCP throw on its own, such as a `hikaricp.configurationFile` that cannot be
-  found, read or applied (SPEC §6), and an `Error` or an interrupt, which pass through.
+  `:migration-id` when one migration is to blame — a lock failure with a row to name
+  carries that row's `:holder`, and one whose wait ran out carries `[:migrations
+  :lock-wait-ms]`, the wait as `:value`, `:dir` and `:acquired-at` — except what the
+  host's JVM makes HikariCP throw on its own, such as a `hikaricp.configurationFile`
+  that cannot be found, read or applied (SPEC §6), and an `Error` or an interrupt,
+  which pass through.
   A pool that opened is closed before a failure leaves this function, so an unreachable
   database costs `[:pool :timeout-ms]` to borrow plus, at most, HikariCP's wait for its
   connection-adder on close: the login timeout, which is the timeout plus half a second
@@ -344,7 +493,8 @@
     (try
       (borrow-once! ds (get-in config [:pool :timeout-ms]))
       (cond-> {:datasource ds}
-        source (assoc :migrations-applied (migrate! ds dir source)))
+        source (assoc :migrations-applied
+                      (migrate! ds dir (get-in config [:migrations :lock-wait-ms]) source)))
       (catch Throwable t
         (close-after-failure! ds t)
         (throw t)))))

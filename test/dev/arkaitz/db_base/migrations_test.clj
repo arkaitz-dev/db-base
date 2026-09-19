@@ -10,6 +10,7 @@
   002 adds the column 003 writes, so applying them the other way round fails instead of
   leaving the same rows. The lock is not here: it arrives with its own concurrency test."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [db-base-test.migration-fns :as fns]
             [dev.arkaitz.db-base :as db]
@@ -72,6 +73,40 @@
   [(str "db-base: " message)
    (cond-> {:config-key [:migrations :dir] :value (str "db-base-test/" prefix)}
      migration-id (assoc :migration-id migration-id))])
+
+(defn- bounded
+  "What `f` answers, or `::ts/hang` after 15 s. A hang guard only — a wait for the lock
+  that lost its deadline would otherwise stop the suite instead of failing it — and no
+  claim below depends on the number."
+  [f]
+  (first (ts/elapsed-ms 15000 f)))
+
+(defn- lock-rows [url] (query url "SELECT id, holder, acquired_at FROM db_base_migration_lock"))
+
+(defn- running
+  "Runs `f` on a daemon thread; returns the thread and a promise of [:ok v] or [:threw e]."
+  [f]
+  (let [result (promise)
+        thread (doto (Thread. ^Runnable #(deliver result (try [:ok (f)] (catch Throwable t [:threw t]))))
+                 (.setDaemon true)
+                 (.start))]
+    [thread result]))
+
+(defn- waiting-for-the-lock?
+  "Whether that thread is inside the wait for the lock, read from its own stack: the
+  overlap is observed, not assumed."
+  [^Thread thread]
+  (boolean (some #(str/starts-with? (.getClassName ^StackTraceElement %) "dev.arkaitz.db_base$acquire_lock")
+                 (.getStackTrace thread))))
+
+(defn- wait-until
+  "Polls `f` until it answers, or gives up after `ms`. A guard, never a criterion."
+  [ms f]
+  (let [deadline (+ (System/nanoTime) (* 1000000 (long ms)))]
+    (loop []
+      (cond (f) true
+            (< (System/nanoTime) deadline) (do (Thread/sleep 20) (recur))
+            :else false))))
 
 (defn- store [url]
   (ragtime-jdbc/sql-database (jdbc/get-datasource {:jdbcUrl url :user ts/user-sentinel
@@ -198,7 +233,8 @@
       (is (= [["001-a"] []] [(recorded url) (query url "SELECT n FROM m_probe")])
           (str engine ": 001 is applied and recorded, 002 is not recorded, and nothing after it ran"))
       (is (= [true false] [(contains? (tables url) "m_probe") (contains? (tables url) "m_down_ran")])
-          (str engine ": 002's down was not run to unwind it — its down file would leave a table behind")))
+          (str engine ": 002's down was not run to unwind it — its down file would leave a table behind"))
+      (is (= [] (lock-rows url)) (str engine ": and the lock is given back after the failure")))
     (is (= {:migrations-applied 2} (boot (config url "fixed")))
         (str engine ": the next boot, on a fixed 002, attempts 002 again and then 003"))
     (is (= [["001-a" "002-b" "003-c"] [[8 "eight"]]] [(recorded url) (query url "SELECT n, label FROM m_probe")])
@@ -213,7 +249,8 @@
       (is (= (inc (or before 0)) n) "precondition: a pool was constructed")
       (is (and (some? @fns/thrown-error) (identical? @fns/thrown-error r))
           (str "the migration's own Error arrives unchanged: " (pr-str r)))
-      (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) "the pool is closed")))
+      (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) "the pool is closed")
+      (is (= [] (lock-rows url)) "and the lock is given back, even after an Error")))
   (testing "a migration that runs and cannot then be recorded names itself, and the next boot runs it again"
     ;; H2 only: SQLite cannot add a constraint to a table that already exists.
     (let [url (ts/h2-memory-url ts/url-sentinel)
@@ -223,7 +260,8 @@
       (is (instance? SQLException (ex-cause e)) (str "the driver's refusal is the cause: " (pr-str (ex-cause e))))
       (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) "the pool is closed")
       (is (= [["001-a"] true] [(recorded url) (contains? (tables url) "m_ran")])
-          "002 ran — it left its table — and is not recorded, which is what leaves it pending")))
+          "002 ran — it left its table — and is not recorded, which is what leaves it pending")
+      (is (= [] (lock-rows url)) "and the lock is given back")))
   (testing "an interrupt reaches the boot between two migrations and passes through, pool closed"
     (let [url    (ts/h2-memory-url ts/url-sentinel)
           before (ts/pool-number)
@@ -238,7 +276,9 @@
       (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000))
           "the pool is closed even though the closing thread was interrupted")
       (is (= [["001-a"] false] [(recorded url) (contains? (tables url) "m_probe")])
-          "001 stayed applied and recorded, and 002, which would create a table, never ran"))))
+          "001 stayed applied and recorded, and 002, which would create a table, never ran")
+      (is (= [] (lock-rows url))
+          "and the lock is given back by a thread that was interrupted while it held it"))))
 
 (deftest a-trailing-separator-leaves-nothing-behind-and-a-blank-statement-beside-a-real-one-still-runs
   (is (= [["001-a" ["CREATE TABLE m_probe (n INTEGER)"]]]
@@ -339,7 +379,8 @@
       (is (= [] (ts/leaks-in engine e)) (str engine ": SPEC §6: a secret was echoed"))
       (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) (str engine ": the pool is closed"))
       (is (= [true false] [(contains? (tables url) "ragtime_migrations") (contains? (tables url) "m_probe")])
-          (str engine ": no migration ran, and the check that says so sees the table that is there")))))
+          (str engine ": no migration ran, and the check that says so sees the table that is there"))
+      (is (= [] (lock-rows url)) (str engine ": and the lock is given back")))))
 
 (deftest an-up-split-across-numbered-files-is-one-migration-and-a-down-beside-it-is-accepted
   (is (some? (io/resource "db-base-test/numbered/001-a.down.sql"))
@@ -368,3 +409,337 @@
             (str "the reader's own failure is the cause: " (pr-str (ex-cause e))))
         (is (= before (ts/pool-number)) "and no pool was constructed"))
       (finally (.setContextClassLoader (Thread/currentThread) previous)))))
+
+(deftest two-boots-that-overlap-migrate-once-and-the-second-waits-its-turn
+  (doseq [[engine url] (engines)]
+    (fns/reset-gate!)
+    (let [t0            (System/currentTimeMillis)
+          [_ first-run] (running #(boot (config url "gated")))]
+      (is (= true (deref @fns/arrived 20000 ::never))
+          (str engine ": precondition: the first boot is inside a migration, holding the lock"))
+      ;; Its wait is wide because the test spends the time before `release`: a third boot,
+      ;; a pool close and its assertions. Nothing here asserts a duration — what proves it
+      ;; waited is its own stack, and what proves the wait is bounded is the third boot.
+      (let [waiting (assoc-in (config url "gated") [:migrations :lock-wait-ms] 20000)
+            [second-thread second-run] (running #(boot waiting))]
+        (is (wait-until 20000 #(waiting-for-the-lock? second-thread))
+            (str engine ": precondition: the second boot is waiting for the lock, not migrating"))
+        (is (= 1 (count (lock-rows url)))
+            (str engine ": precondition: one lock row exists while both boots are running"))
+        (testing "a third boot that will not wait at all"
+          (let [[_ holder at] (first (lock-rows url))
+                before        (ts/pool-number)
+                e             (bounded #(ts/thrown (fn [] (db/start (assoc-in (config url "gated")
+                                                                              [:migrations :lock-wait-ms] 0)))))
+                t1            (System/currentTimeMillis)
+                n             (ts/pool-number)]
+            (is (= (inc (or before 0)) n) (str engine ": precondition: it did construct a pool"))
+            (is (= [(str "db-base: another instance holds the migration lock: " holder ", taken at " at
+                         " (epoch milliseconds), and 0 ms of [:migrations :lock-wait-ms] were not enough."
+                         " If that instance is gone, the repair is: DELETE FROM db_base_migration_lock"
+                         " WHERE id = 'ragtime_migrations'")
+                    {:config-key [:migrations :lock-wait-ms] :value 0 :dir "db-base-test/gated"
+                     :holder holder :acquired-at at}]
+                   (pair e))
+                (str engine ": it names the holder, when it took the lock, and the repair"))
+            (is (<= t0 (long at) t1) (str engine ": the recorded instant is the first boot's own: " at))
+            (is (= [] (ts/leaks-in engine e)) (str engine ": SPEC §6: a secret was echoed"))
+            (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) (str engine ": its pool is closed"))
+            (is (= [["ragtime_migrations" holder at]] (lock-rows url))
+                (str engine ": and it left the lock row alone, holder and instant included"))))
+        (deliver @fns/release true)
+        (is (= [[:ok {:migrations-applied 3}] [:ok {:migrations-applied 0}]]
+               [(deref first-run 30000 ::hang) (deref second-run 30000 ::hang)])
+            (str engine ": the first applied the three, the second waited and then found nothing to do"))
+        (is (= [1 true] [@fns/gate-calls (true? @fns/gate-exit)])
+            (str engine ": the gated migration ran once, and the test released it rather than its own bound"))
+        (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]] []]
+               [(recorded url) (query url "SELECT n, label FROM m_probe") (lock-rows url)])
+            (str engine ": recorded once, written once, and the lock given back"))))))
+
+(deftest a-lock-row-left-by-a-holder-that-died-stops-every-boot-until-the-repair-it-names
+  (doseq [[engine url] (engines)]
+    (execute! url (str "CREATE TABLE db_base_migration_lock (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+    (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                       " VALUES ('ragtime_migrations', 'DEAD-HOLDER-7f3a', 1700000000000)"))
+    (let [cfg      (assoc-in (config url "three") [:migrations :lock-wait-ms] 200)
+          expected [(str "db-base: another instance holds the migration lock: DEAD-HOLDER-7f3a, taken at"
+                         " 1700000000000 (epoch milliseconds), and 200 ms of [:migrations :lock-wait-ms]"
+                         " were not enough. If that instance is gone, the repair is: DELETE FROM"
+                         " db_base_migration_lock WHERE id = 'ragtime_migrations'")
+                    {:config-key [:migrations :lock-wait-ms] :value 200 :dir "db-base-test/three"
+                     :holder "DEAD-HOLDER-7f3a" :acquired-at 1700000000000}]]
+      (doseq [attempt ["the first boot after it died" "the boot after that"]]
+        (let [before (ts/pool-number)
+              e      (bounded #(ts/thrown (fn [] (db/start cfg))))
+              n      (ts/pool-number)]
+          (is (= (inc (or before 0)) n) (str engine ": " attempt ": precondition: a pool was constructed"))
+          (is (= expected (pair e)) (str engine ": " attempt))
+          (is (= [] (ts/leaks-in engine e)) (str engine ": " attempt ": SPEC §6: a secret was echoed"))
+          (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000))
+              (str engine ": " attempt ": the pool is closed"))))
+      (is (= [false false] [(contains? (tables url) "ragtime_migrations") (contains? (tables url) "m_probe")])
+          (str engine ": a boot the lock stopped created no control table and ran nothing"))
+      (let [repair (re-find #"DELETE FROM .*$" (str (ex-message (bounded #(ts/thrown (fn [] (db/start cfg)))))))]
+        (is (some? repair) (str engine ": precondition: the message carries a statement to run"))
+        (execute! url repair)
+        (is (= [{:migrations-applied 3} []] [(boot (config url "three")) (lock-rows url)])
+            (str engine ": the repair the message names is the one that works, and the boot gives the lock back"))))))
+
+(deftest with-nothing-left-to-do-a-lock-row-left-behind-does-not-stop-a-boot
+  (doseq [[engine url] (engines)]
+    (is (= {:migrations-applied 3} (boot (config url "three"))) (str engine ": precondition: everything is applied"))
+    (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                       " VALUES ('ragtime_migrations', 'DEAD-HOLDER-7f3a', 1700000000000)"))
+    (is (= {:migrations-applied 0} (bounded #(boot (assoc-in (config url "three") [:migrations :lock-wait-ms] 0))))
+        (str engine ": a boot with nothing to do never asks for the lock"))
+    (is (= [["ragtime_migrations" "DEAD-HOLDER-7f3a" 1700000000000]] (lock-rows url))
+        (str engine ": and leaves the row exactly as it found it"))
+    (is (= (str "db-base: another instance holds the migration lock: DEAD-HOLDER-7f3a, taken at 1700000000000"
+                " (epoch milliseconds), and 0 ms of [:migrations :lock-wait-ms] were not enough. If that"
+                " instance is gone, the repair is: DELETE FROM db_base_migration_lock WHERE id ="
+                " 'ragtime_migrations'")
+           (str (ex-message (bounded #(ts/thrown (fn [] (db/start (assoc-in (config url "plus-one")
+                                                                            [:migrations :lock-wait-ms] 0))))))))
+        (str engine ": positive control: that same row does stop a boot that has a migration to apply"))))
+
+(deftest a-recorded-migration-the-source-lacks-stops-a-boot-with-nothing-else-to-do
+  (doseq [[engine url] (engines)]
+    (is (= {:migrations-applied 5} (boot (config url "between"))) (str engine ": precondition: five are applied"))
+    ;; A row someone else holds, and a wait of zero: a boot that asked for the lock before
+    ;; reading the history would fail naming that holder instead of the disagreement.
+    (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                       " VALUES ('ragtime_migrations', 'DEAD-HOLDER-7f3a', 1700000000000)"))
+    (let [e (bounded #(ts/thrown (fn [] (db/start (assoc-in (config url "three")
+                                                            [:migrations :lock-wait-ms] 0)))))]
+      (is (= (refused "three" (str "migration 002a-x is recorded in ragtime_migrations but not found under"
+                                   " db-base-test/three")
+                      "002a-x")
+             (pair e))
+          (str engine ": nothing is pending, and a history the source lacks still stops the boot"))
+      (is (= [["ragtime_migrations" "DEAD-HOLDER-7f3a" 1700000000000]] (lock-rows url))
+          (str engine ": and the lock was never asked for to say it — the row it would have"
+               " failed against is as it was")))))
+
+(deftest a-lock-table-that-cannot-be-read-or-created-stops-the-boot
+  (doseq [[engine url break!]
+          [["H2" (ts/h2-memory-url ts/url-sentinel)
+            #(execute! % "CREATE FORCE VIEW db_base_migration_lock AS SELECT * FROM no_such_table")]
+           ["SQLite" (ts/sqlite-file-url ts/url-sentinel)
+            #(do (execute! % "CREATE TABLE gone (id VARCHAR(64))")
+                 (execute! % "CREATE VIEW db_base_migration_lock AS SELECT id FROM gone")
+                 (execute! % "DROP TABLE gone"))]]]
+    (break! url)
+    (is (= :threw (try (query url "SELECT COUNT(*) FROM db_base_migration_lock") :read
+                       (catch Exception _ :threw)))
+        (str engine ": precondition: the name is taken by something no SELECT can read"))
+    (let [before (ts/pool-number)
+          e      (bounded #(ts/thrown (fn [] (db/start (config url "three")))))
+          n      (ts/pool-number)]
+      (is (= (inc (or before 0)) n) (str engine ": precondition: a pool was constructed"))
+      (is (= (refused "three" "the lock table db_base_migration_lock could not be taken, read or created")
+             (pair e))
+          engine)
+      (is (instance? SQLException (ex-cause e)) (str engine ": the driver's refusal is the cause: " (pr-str (ex-cause e))))
+      (is (= [] (ts/leaks-in engine e)) (str engine ": SPEC §6: a secret was echoed"))
+      (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) (str engine ": the pool is closed"))
+      (is (= [false false] [(contains? (tables url) "ragtime_migrations") (contains? (tables url) "m_probe")])
+          (str engine ": nothing was created or run")))))
+
+(deftest a-boot-that-loses-the-race-to-create-the-lock-table-carries-on
+  (doseq [[engine url] (engines)]
+    (execute! url (str "CREATE TABLE db_base_migration_lock (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+    (let [probes   (atom 0)
+          able-var (ns-resolve 'dev.arkaitz.db-base 'readable?)
+          honest   @able-var]
+      ;; The first probe lies, so the CREATE meets a table that is already there — what the
+      ;; loser of a race between two cold boots sees. The second probe, an honest one,
+      ;; absorbs it. The var is put back from this thread, so a boot that hung would not
+      ;; leave the lie behind for the rest of the suite.
+      (alter-var-root able-var
+                      (constantly (fn [ds table] (if (= 1 (swap! probes inc)) false (honest ds table)))))
+      (try (is (= {:migrations-applied 3} (bounded #(boot (config url "three"))))
+               (str engine ": the create that loses the race does not stop the boot"))
+           (finally (alter-var-root able-var (constantly honest))))
+      (is (= [2 []] [@probes (lock-rows url)])
+          (str engine ": witness: the probe was asked twice, and the lock was taken and given back")))))
+
+(deftest a-boot-gives-back-its-own-lock-row-and-no-other
+  (doseq [[engine url] (engines)]
+    (fns/reset-gate!)
+    (let [[_ run] (running #(boot (config url "gated")))]
+      (is (= true (deref @fns/arrived 20000 ::never))
+          (str engine ": precondition: the boot is inside a migration, holding the lock"))
+      (is (= 1 (count (lock-rows url)))
+          (str engine ": precondition: its row is there for another connection to read"))
+      ;; An operator who thinks that boot died runs the repair the message names, and a
+      ;; second instance takes the lock. The row this one gives back must be its own — and
+      ;; a holder that kept a transaction open would not let this connection delete it.
+      ;; That it gives its own row back at all is the overlap test's claim, not this one's:
+      ;; here its row is gone before it tries.
+      (execute! url "DELETE FROM db_base_migration_lock WHERE id = 'ragtime_migrations'")
+      (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                         " VALUES ('ragtime_migrations', 'TOOK-IT-AFTER-THE-REPAIR', 1700000000001)"))
+      (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                         " VALUES ('other_migrations', 'ANOTHER-CONTROL-TABLE', 1700000000002)"))
+      (deliver @fns/release true)
+      (is (= [:ok {:migrations-applied 3}] (deref run 30000 ::hang))
+          (str engine ": the boot finishes and reports what it applied"))
+      (is (= [["other_migrations" "ANOTHER-CONTROL-TABLE" 1700000000002]
+              ["ragtime_migrations" "TOOK-IT-AFTER-THE-REPAIR" 1700000000001]]
+             (sort-by first (lock-rows url)))
+          (str engine ": and deleted neither the row taken after the repair nor another"
+               " control table's")))))
+
+(deftest a-lock-that-cannot-be-given-back-stops-the-boot-after-the-migrations-applied
+  (doseq [[engine url] (engines)]
+    (fns/reset-gate!)
+    (let [[_ run] (running #(boot (config url "gated")))]
+      (is (= true (deref @fns/arrived 20000 ::never))
+          (str engine ": precondition: the boot is inside a migration, holding the lock"))
+      (execute! url "DROP TABLE db_base_migration_lock")
+      (deliver @fns/release true)
+      (let [[outcome e] (deref run 30000 ::hang)
+            holder      (:holder (ex-data e))]
+        (is (= :threw outcome) (str engine ": the boot fails rather than returning a handle"))
+        (is (some? (parse-uuid (str holder)))
+            (str engine ": it names the holder whose row it is: " (pr-str holder)))
+        (is (= [(str "db-base: the migration run finished, but this boot's lock row could not be given"
+                     " back. If it is still there, the repair is: DELETE FROM db_base_migration_lock"
+                     " WHERE id = 'ragtime_migrations' AND holder = '" holder "'")
+                {:config-key [:migrations :dir] :value "db-base-test/gated" :holder holder}]
+               (pair e))
+            (str engine ": SPEC §6: it is this library's ex-info, and what it advises is true of a"
+                 " table that is gone as well as of a row that is still there"))
+        (is (instance? SQLException (ex-cause e))
+            (str engine ": the driver's refusal is the cause: " (pr-str (ex-cause e))))
+        (is (= [] (ts/leaks-in engine e)) (str engine ": SPEC §6: a secret was echoed"))
+        (is (= [] (ts/threads-alive-after-join (ts/pool-number) #":housekeeper$" 5000))
+            (str engine ": and its pool is closed")))
+      (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]]
+             [(recorded url) (query url "SELECT n, label FROM m_probe")])
+          (str engine ": the migrations applied and were recorded — the boot stops, the schema stands")))))
+
+(deftest a-lock-given-back-as-the-wait-runs-out-is-taken-not-refused
+  (doseq [[engine url] (engines)]
+    (fns/reset-gate!)
+    (execute! url (str "CREATE TABLE db_base_migration_lock (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+    (execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                       " VALUES ('ragtime_migrations', 'HOLDER-ABOUT-TO-FINISH', 1700000000000)"))
+    (let [reads   (atom 0)
+          row-var (ns-resolve 'dev.arkaitz.db-base 'first-row)
+          honest  @row-var
+          t0      (System/currentTimeMillis)]
+      ;; The holder gives the lock back in the instant between the last refused INSERT and the
+      ;; read that would name it: the race is made to happen, not waited for. The var is put
+      ;; back as soon as the boot is past that read, so nothing of this test can outlive it.
+      (alter-var-root row-var
+                      (constantly (fn [ds sql & params]
+                                    (when (str/includes? sql "SELECT holder")
+                                      (swap! reads inc)
+                                      (execute! url (str "DELETE FROM db_base_migration_lock"
+                                                         " WHERE id = 'ragtime_migrations'")))
+                                    (apply honest ds sql params))))
+      (let [[_ run] (running #(boot (assoc-in (config url "gated") [:migrations :lock-wait-ms] 0)))]
+        (try (is (= true (deref @fns/arrived 20000 ::never))
+                 (str engine ": precondition: the boot is inside a migration rather than refused"))
+             (finally (alter-var-root row-var (constantly honest))))
+        (let [rows (lock-rows url)
+              t1   (System/currentTimeMillis)
+              [id holder at] (first rows)]
+          (is (= [1 "ragtime_migrations" true] [(count rows) id (not= "HOLDER-ABOUT-TO-FINISH" holder)])
+              (str engine ": it took the lock the holder had just given back, in its own name: "
+                   (pr-str rows)))
+          (is (<= t0 (long (or at 0)) t1)
+              (str engine ": and recorded when it took it, not when the other did: " (pr-str at))))
+        (deliver @fns/release true)
+        (is (= [:ok {:migrations-applied 3}] (deref run 30000 ::hang))
+            (str engine ": the three run under that lock"))
+        (is (= [1 ["001-a" "002-b" "003-c"] []] [@reads (recorded url) (lock-rows url)])
+            (str engine ": witness: the read that names the holder ran once, and the lock was given back"))))))
+
+(deftest a-history-that-comes-back-out-of-order-still-applies-what-is-pending
+  (doseq [[engine url] (engines)]
+    (is (= {:migrations-applied 3} (boot (config url "three"))) (str engine ": precondition: three applied"))
+    ;; The same disorder a millisecond tie produces (measured, SPEC §7), written by hand so
+    ;; it is there on both engines: the history comes back in an order the source does not have.
+    (execute! url "DELETE FROM ragtime_migrations")
+    (doseq [id ["003-c" "001-a" "002-b"]]
+      (execute! url (str "INSERT INTO ragtime_migrations (id, created_at) VALUES ('" id
+                         "', '2026-09-14T10:00:00.000')")))
+    (is (= ["003-c" "001-a" "002-b"] (vec (ragtime-protocols/applied-migration-ids (store url))))
+        (str engine ": witness: ragtime reads the history out of the source's order"))
+    (is (= ::strategy/migration-conflict
+           (:reason (ex-data (ts/thrown #(doall (strategy/raise-error ["003-c" "001-a" "002-b"]
+                                                                      ["001-a" "002-b" "003-c" "004-d"]))))))
+        (str engine ": positive control: ragtime's own strategy calls that order a conflict"))
+    (is (= {:migrations-applied 1} (bounded #(boot (config url "plus-one"))))
+        (str engine ": start applies the one that is pending instead of refusing"))
+    (is (= [["001-a" "002-b" "003-c" "004-d"] [[7 "seven"] [4 "four"]] []]
+           [(recorded url) (query url "SELECT n, label FROM m_probe") (lock-rows url)])
+        (str engine ": and only that one ran, recorded, with the lock given back"))
+    (execute! url "DELETE FROM ragtime_migrations")
+    (doseq [id ["002-b" "003-c" "001-a" "004-d"]]
+      (execute! url (str "INSERT INTO ragtime_migrations (id, created_at) VALUES ('" id
+                         "', '2026-09-14T10:00:00.000')")))
+    (is (= (refused "between" "migration 002a-x is new but sorts before 004-d, which is already applied"
+                    "002a-x")
+           (pair (bounded #(ts/thrown (fn [] (db/start (assoc-in (config url "between")
+                                                                 [:migrations :lock-wait-ms] 0)))))))
+        (str engine ": and which one is the last applied is a question about the source's order,"
+             " not about the order the history arrives in"))))
+
+(deftest the-history-is-read-as-a-set-whatever-order-it-arrives-in
+  (let [plan     @(ns-resolve 'dev.arkaitz.db-base 'plan-migrations)
+        between  (vec (ragtime-jdbc/load-resources "db-base-test/between"))
+        plus-one (vec (ragtime-jdbc/load-resources "db-base-test/plus-one"))]
+    (is (= [["001-a" "002-b" "002a-x" "003-c" "004-d"] ["001-a" "002-b" "003-c" "004-d"]]
+           [(mapv ragtime-protocols/id between) (mapv ragtime-protocols/id plus-one)])
+        "precondition: one source sorts a pending migration between two applied ones, the other after all")
+    ;; Ties in ragtime's created_at come back in whatever order the engine likes, so which
+    ;; migration is the last applied is a question about the source's order, not about the
+    ;; order the ids arrive in (SPEC §7).
+    (doseq [order [["001-a" "002-b" "003-c"] ["003-c" "001-a" "002-b"] ["002-b" "003-c" "001-a"]
+                   ["003-c" "002-b" "001-a"] ["001-a" "003-c" "002-b"] ["002-b" "001-a" "003-c"]]]
+      (is (= (refused "between" "migration 002a-x is new but sorts before 003-c, which is already applied"
+                      "002a-x")
+             (pair (ts/thrown #(plan "db-base-test/between" order between))))
+          (str "refused whatever order the history arrives in: " (pr-str order)))
+      (is (= ["004-d"] (plan "db-base-test/plus-one" order plus-one))
+          (str "and what sorts after every applied one is pending in that same order: " (pr-str order))))))
+
+(deftest a-lock-row-a-failed-release-left-behind-waits-for-a-boot-that-has-something-to-apply
+  (doseq [[engine url] (engines)]
+    (let [give-back (ns-resolve 'dev.arkaitz.db-base 'release-lock!)
+          e         (bounded #(ts/thrown
+                               (fn []
+                                 (with-redefs-fn {give-back (fn [_ _]
+                                                              (throw (SQLException.
+                                                                      "sentinel: the delete refused")))}
+                                   (fn [] (db/start (config url "three")))))))
+          holder    (:holder (ex-data e))]
+      (is (= [["ragtime_migrations" holder]] (mapv #(subvec % 0 2) (lock-rows url)))
+          (str engine ": the row it could not give back is still there, in its own name"))
+      (is (= (str "db-base: the migration run finished, but this boot's lock row could not be given"
+                  " back. If it is still there, the repair is: DELETE FROM db_base_migration_lock"
+                  " WHERE id = 'ragtime_migrations' AND holder = '" holder "'")
+             (ex-message e))
+          (str engine ": and the boot says so, naming the row an operator would check"))
+      (is (= ["001-a" "002-b" "003-c"] (recorded url))
+          (str engine ": with everything applied and recorded, which is why the boot is the only loss"))
+      (is (= {:migrations-applied 0} (bounded #(boot (assoc-in (config url "three")
+                                                               [:migrations :lock-wait-ms] 0))))
+          (str engine ": SPEC §7: the restarts that follow have nothing to apply, so they neither"
+               " wait for that row nor report it"))
+      (let [refusal (bounded #(ts/thrown (fn [] (db/start (assoc-in (config url "plus-one")
+                                                                    [:migrations :lock-wait-ms] 0)))))
+            repair  (re-find #"DELETE FROM .*$" (str (ex-message refusal)))]
+        (is (= holder (:holder (ex-data refusal)))
+            (str engine ": and the first boot that does have one to run names that same holder"))
+        (is (some? repair) (str engine ": precondition: its message carries a statement to run"))
+        (execute! url repair)
+        (is (= [{:migrations-applied 1} []] [(boot (config url "plus-one")) (lock-rows url)])
+            (str engine ": the repair it names is the one that works, and the boot gives the lock back"))))))

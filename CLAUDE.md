@@ -53,9 +53,11 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       excepted, and its time bound left to the driver (decided with the user 2026-09-13,
       after measuring both).
 - [x] Choose the pool and the migration library by running them (above).
-- [ ] Migrations inside `start`, verifying §7's failure class — a failure at N leaves
+- [x] Migrations inside `start`, verifying §7's failure class — a failure at N leaves
       1..N-1 applied and recorded, N unrecorded, `start` throws naming N, next boot
       retries N — under the lock SPEC §7 records (decided with the user 2026-09-14).
+      Done 2026-09-19: the source is checked before any pool exists, the run sits under
+      the C+ lock, and two boots provably overlap in the test.
 - [ ] The two-engine test with its positive control: the proof of §3.
 - [ ] **The production engine is unchosen.** The test engines are H2 and SQLite; the
       2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes
@@ -128,6 +130,12 @@ is any code to break.**
   `-Dh2.delayWrongPasswordMin=0`; a JVM started without it (a REPL, `java -cp`) re-arms it,
   and the wrong-password test's witness says so. Never `delayWrongPasswordMax=0`, which
   means no maximum.
+- **A lock row nobody is waiting for.** A boot with nothing pending never asks for the
+  lock, which is what keeps an ordinary restart from leaving a row behind — and also what
+  makes a row left by a failed release invisible: every restart with nothing to apply
+  starts clean and says nothing, until the first deploy that does have a migration fails
+  naming a holder from days ago. The failure is loud when it matters and silent until
+  then, on purpose; a test pins both halves.
 - **HikariCP keeps the login timeout on `DriverManager`, which the whole JVM shares.** A
   pool's close waits for the login timeout of the last pool constructed, so timing tests
   keep their timeouts within the same whole second.

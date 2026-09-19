@@ -231,7 +231,13 @@ say.
 
 **Failure is `ex-info`.** The message names the offending thing, the data carries
 `:config-key` as a vector path, and `:migration-id` when one migration of §7 is to blame,
-and a driver's own exception is kept as `ex-cause` rather than swallowed. An `Error`, and
+and a driver's own exception is kept as `ex-cause` rather than swallowed. Everything §7
+refuses carries `[:migrations :dir]` with the prefix as `:value` — the subsystem, since
+the lock table and the control table are this library's names and no key of the host's is
+to blame — except a wait that ran out, which carries `[:migrations :lock-wait-ms]`, the
+wait as `:value`, `:dir`, and the `:holder` and `:acquired-at` the row gave. A lock that
+cannot be given back carries the `:holder` whose row it is, so the repair the message
+names can be checked before it is run. An `Error`, and
 the `InterruptedException` ragtime raises between two migrations, are not failures of the
 configuration or of the database and pass through unwrapped — after the pool, if one
 opened, has been closed, which HikariCP will not do on an interrupted thread unless the
@@ -388,10 +394,19 @@ and given back with a `DELETE` of that holder's row, in ANSI SQL, with no transa
 open. A boot takes it only when the control table shows something pending — read with a
 `SELECT` of this library's, because ragtime's own read creates the table, which must
 happen under the lock — and the run reads the control table again under the lock before
-it applies anything. **The wait is
+it applies anything. A control table that is not there, or that this `SELECT` cannot read
+at all, is not an answer: such a boot takes the lock and lets the run decide. A history
+that disagrees with the source is refused from that same read, **before** the lock, so a
+boot with nothing to apply reports the disagreement rather than a lock it never needed.
+A lock that cannot be given back afterwards fails the boot like anything else, with the
+migrations already applied and recorded. If the row survived whatever stopped the
+`DELETE` it stays, and because a boot with nothing pending never asks for the lock, the
+restarts in between neither see it nor report it: the first boot that does have a
+migration to run is the one that names it. **The wait is
 `[:migrations :lock-wait-ms]`**, required and not defaulted, because waiting for another
 instance to finish migrating is not waiting for a connection: a boot that cannot take the
-lock within it fails naming the holder and when it took the lock. On an engine that gives
+lock within it fails naming the holder id it recorded — an identifier for that row, not
+for a process an operator can find — and when it took the lock. On an engine that gives
 one writer the whole file, the wait can stretch by the driver's own busy timeout and end
 in taking the lock rather than failing — measured on SQLite, a one-second wait against a
 holder inside a write transaction ended 1.75 to 1.77 seconds late, ten times out of ten,
