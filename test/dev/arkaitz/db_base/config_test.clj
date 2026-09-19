@@ -40,8 +40,11 @@
         pool-max #(refusal "[:pool :max] must be an integer from 1 to 2147483647" {:config-key [:pool :max] :value %})
         pool-ms  #(refusal "[:pool :timeout-ms] must be an integer from 250 to 2147483646 milliseconds"
                            {:config-key [:pool :timeout-ms] :value %})
-        migs     #(refusal ":migrations must be :none or a map with :dir" {:config-key [:migrations] :value %})
-        dir      #(refusal "[:migrations :dir] must be a non-blank string" {:config-key [:migrations :dir] :value %})]
+        migs     #(refusal ":migrations must be :none or a map of :dir and :lock-wait-ms"
+                           {:config-key [:migrations] :value %})
+        dir      #(refusal "[:migrations :dir] must be a non-blank string" {:config-key [:migrations :dir] :value %})
+        lock     #(refusal "[:migrations :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
+                           {:config-key [:migrations :lock-wait-ms] :value %})]
     (concat
      [["not a map: 42" 42 (refusal "configuration must be a map" {:config-key []})]
       ["not a map: nil" nil (refusal "configuration must be a map" {:config-key []})]
@@ -103,12 +106,16 @@
       [":migrations :dir a keyword" (assoc base :migrations {:dir :x}) (dir :x)]
       [":migrations with an unknown key"
        (assoc base :migrations {:directory "x"})
-       (refusal "unknown key [:directory] in [:migrations] — it takes [:dir]"
+       (refusal "unknown key [:directory] in [:migrations] — it takes [:dir :lock-wait-ms]"
                 {:config-key [:migrations :directory]})]
-      [":migrations {:dir …} is refused until migrations run, never skipped"
-       (assoc base :migrations {:dir "db/migration"})
-       (refusal "[:migrations :dir] is not implemented yet; use :migrations :none"
-                {:config-key [:migrations :dir]})]])))
+      [":migrations with both keys wrong: the prefix is named first"
+       (assoc base :migrations {:dir "" :lock-wait-ms -1})
+       (dir "")]]
+     ;; 0 is a valid wait (one attempt), so the floor is -1; the ceiling is the pool's own.
+     (for [v [::missing nil -1 1.5 1.5M 3/2 "10" 2147483648 2147483648N]]
+       [(str "[:migrations :lock-wait-ms] " (pr-str v))
+        (assoc base :migrations (cond-> {:dir "db/migration"} (not= ::missing v) (assoc :lock-wait-ms v)))
+        (lock (when-not (= ::missing v) v))]))))
 
 (deftest start-refuses-each-malformed-configuration-with-an-exact-message-and-config-key
   (let [handle (db/start base)]
@@ -137,7 +144,12 @@
                          ["[:pool :timeout-ms] 2147483646, the largest real deadline"
                           (assoc-in base [:pool :timeout-ms] 2147483646)]
                          ["[:pool :timeout-ms] 250, the floor itself" (assoc-in base [:pool :timeout-ms] 250)]
-                         [":migrations {:dir …} passes validation" (assoc base :migrations {:dir "db/migration"})]]]
+                         ["[:migrations :lock-wait-ms] 0, a single attempt"
+                          (assoc base :migrations {:dir "db/migration" :lock-wait-ms 0})]
+                         ["[:migrations :lock-wait-ms] 2147483647, the ceiling itself"
+                          (assoc base :migrations {:dir "db/migration" :lock-wait-ms 2147483647})]
+                         ["[:migrations :lock-wait-ms] a BigInt" (assoc base :migrations {:dir "db/migration" :lock-wait-ms 10N})]
+                         ["[:migrations :lock-wait-ms] an int" (assoc base :migrations {:dir "db/migration" :lock-wait-ms (int 5)})]]]
       (is (= ::ts/no-throw (ts/attempt #(#'db/validate! cfg))) label)))
   (testing "a URL no driver accepts is refused before the pool sees it, naming :jdbc-url"
     (let [e (ts/thrown #(db/start (assoc base :jdbc-url (str "jdbc:nope://" ts/user-sentinel ":"

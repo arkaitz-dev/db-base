@@ -26,8 +26,23 @@
   **What the pool and the driver read on their own is the host's JVM** (SPEC §6).
   This library reads no file, environment or property; HikariCP honours
   `hikaricp.configurationFile` when the JVM sets it, and a driver reads its own
-  files, and neither is refused here."
-  (:import [com.zaxxer.hikari HikariConfig HikariDataSource]
+  files, and neither is refused here.
+
+  **Migrations run inside `start`, before it returns** (SPEC §7). They come from a
+  classpath prefix the host names, through ragtime, and are recorded in
+  `ragtime_migrations`. The source is loaded and checked before any pool exists; a
+  failure at migration N leaves everything before it applied and recorded, closes the
+  pool and names N. What to apply is decided from the recorded ids as a set and the
+  source's order, never from the order the control table returns them in."
+  (:require [clojure.string :as str]
+            [ragtime.core :as ragtime]
+            [ragtime.next-jdbc :as ragtime-jdbc]
+            [ragtime.protocols :as ragtime-protocols]
+            ;; ragtime's own resource reader: the same listing it loads from, so a file it
+            ;; would ignore can be refused instead (SPEC §7).
+            [resauce.core :as resauce])
+  (:import [clojure.lang ExceptionInfo]
+           [com.zaxxer.hikari HikariConfig HikariDataSource]
            [java.sql Connection DriverManager SQLException]
            [javax.sql DataSource]))
 
@@ -35,7 +50,12 @@
 
 (def ^:private pool-keys #{:max :timeout-ms})
 
-(def ^:private migrations-keys #{:dir})
+(def ^:private migrations-keys #{:dir :lock-wait-ms})
+
+(def ^:private host-migrations-table
+  "The host's control table: ragtime's own default, so a host that already used ragtime
+  keeps its history (SPEC §7)."
+  "ragtime_migrations")
 
 (def ^:private hikari-timeout-floor-ms
   "HikariCP's default floor: it throws `IllegalArgumentException` below this and turns
@@ -65,8 +85,7 @@
   (and (string? x) (not (.isBlank ^String x))))
 
 (defn- integer-between?
-  "Any integer type, BigInt included, as long as it fits what the pool's setter
-  takes."
+  "Any integer type, BigInt included, within bounds the caller derives."
   [low high x]
   (and (integer? x) (<= low x high)))
 
@@ -89,13 +108,19 @@
     (= :none migrations) nil
 
     (map? migrations)
-    (do (refuse-unknown-keys! migrations migrations-keys [:migrations])
-        (when-not (non-blank-string? (:dir migrations))
-          (fail! "[:migrations :dir] must be a non-blank string" [:migrations :dir]
-                 (:dir migrations))))
+    (let [{:keys [dir lock-wait-ms]} migrations]
+      (refuse-unknown-keys! migrations migrations-keys [:migrations])
+      (when-not (non-blank-string? dir)
+        (fail! "[:migrations :dir] must be a non-blank string" [:migrations :dir] dir))
+      ;; 0 is a single attempt. The ceiling is the pool timeouts' own, decided with the
+      ;; user: far past any migration, and still an int.
+      (when-not (integer-between? 0 Integer/MAX_VALUE lock-wait-ms)
+        (fail! (str "[:migrations :lock-wait-ms] must be an integer from 0 to " Integer/MAX_VALUE
+                    " milliseconds")
+               [:migrations :lock-wait-ms] lock-wait-ms)))
 
     :else
-    (fail! ":migrations must be :none or a map with :dir" [:migrations] migrations)))
+    (fail! ":migrations must be :none or a map of :dir and :lock-wait-ms" [:migrations] migrations)))
 
 (defn- validate! [config]
   (when-not (map? config)
@@ -136,63 +161,199 @@
                         {:config-key [:pool :timeout-ms] :value timeout-ms} e))))
     (HikariDataSource. hikari)))
 
+(defn- close-uninterrupted!
+  "Closes `resource` with the thread's interrupt flag cleared, and sets it again
+  afterwards. HikariCP's close returns at once when the flag is set and leaves the
+  pool's housekeeper and connection closer running (measured, three pools of three)."
+  [^java.lang.AutoCloseable resource]
+  (let [interrupted (Thread/interrupted)]
+    (try (.close resource)
+         (finally (when interrupted (.interrupt (Thread/currentThread)))))))
+
 (defn- close-after-failure!
   "Closes `resource` without letting a failure to close replace the failure that
   made closing necessary."
   [^java.lang.AutoCloseable resource ^Throwable failure]
-  (try (.close resource)
+  (try (close-uninterrupted! resource)
        (catch Throwable t
          ;; A resource that rethrows the very failure it was closed for: a throwable
          ;; cannot suppress itself, and trying would throw instead.
          (when-not (identical? t failure) (.addSuppressed failure t)))))
 
+(defn- migration-failure [dir message id cause]
+  (ex-info (str "db-base: " message)
+           (cond-> {:config-key [:migrations :dir] :value dir}
+             id (assoc :migration-id id))
+           cause))
+
+(def ^:private migration-file-name
+  "What ragtime loads: EDN, or SQL named `<id>.up.sql` / `<id>.down.sql`, the statements
+  optionally split across numbered files. Anything else it passes over without a word, or
+  loads under an empty id and runs nothing of — `001-a.sql` is that second case — and
+  either way it is a migration that never runs."
+  #"^[^/]+\.edn$|^[^/]+\.(?:up|down)(?:\.\d+)?\.sql$")
+
+(defn- refuse-files-ragtime-would-ignore! [dir]
+  (let [ignored (for [url   (resauce/resource-dir dir)
+                      :let  [address (str url)]
+                      ;; A subdirectory ends in a slash. Only direct children count, which
+                      ;; §7 records, so a directory beside them is not a mistake.
+                      :when (not (.endsWith address "/"))
+                      :let  [file-name (subs address (inc (.lastIndexOf address "/")))]
+                      :when (not (re-find migration-file-name file-name))]
+                  file-name)]
+    (when-let [file-name (first (sort ignored))]
+      (throw (migration-failure dir (str file-name " under " dir " is not a migration ragtime would"
+                                         " load: name SQL files NNN-name.up.sql and EDN files"
+                                         " NNN-name.edn, or keep it out of the prefix")
+                                nil nil)))))
+
+(defn- load-source
+  "The migrations under the classpath prefix `dir`, refused before any pool exists when a
+  file there is not one, when they cannot be read, when there are none, when two load
+  under one id, when one has no id, and when one has nothing to run (SPEC §7)."
+  [dir]
+  (let [migrations (try (refuse-files-ragtime-would-ignore! dir)
+                        (vec (ragtime-jdbc/load-resources dir))
+                        ;; The refusal above is already this library's; everything else
+                        ;; listing or reading the prefix throws is the reader's.
+                        (catch ExceptionInfo e (throw e))
+                        (catch Exception e
+                          (throw (migration-failure dir (str "the migrations under " dir " could not be loaded")
+                                                    nil e))))]
+    (when (empty? migrations)
+      ;; Zero found is the schema one deploy behind: a misspelt prefix, or a jar built
+      ;; without directory entries, which answers nothing for any prefix.
+      (throw (migration-failure dir (str "no migrations found under the classpath prefix " dir) nil nil)))
+    (when (some #(str/blank? (ragtime-protocols/id %)) migrations)
+      ;; Several migrations in one EDN file, none of them named: ragtime records the
+      ;; first under the empty id and the second collides with it.
+      (throw (migration-failure dir (str "a migration under " dir " has no id: name SQL files"
+                                         " NNN-name.up.sql, and give every migration in an EDN"
+                                         " vector its own id")
+                                nil nil)))
+    (when-let [id (first (sort (keep (fn [[id n]] (when (< 1 n) id))
+                                     (frequencies (map ragtime-protocols/id migrations)))))]
+      (throw (migration-failure dir (str "two migrations under " dir " load under the id " id) id nil)))
+    ;; ragtime records such a migration as applied without running anything: an EDN
+    ;; function that does not resolve loads as nil, and a lone down file as no statements.
+    (when-let [id (first (sort (keep (fn [m] (let [up (:up m)]
+                                               (when (or (nil? up)
+                                                         (and (coll? up)
+                                                              (every? #(and (string? %) (str/blank? %)) up)))
+                                                 (ragtime-protocols/id m))))
+                                     migrations)))]
+      (throw (migration-failure dir (str "migration " id " under " dir " has nothing to run up: its up"
+                                         " is missing, blank, or names a function that does not"
+                                         " exist")
+                                id nil)))
+    migrations))
+
+(defn- plan-migrations
+  "The ids to apply, in the source's order. Refuses a recorded id the source no longer
+  has, and a pending one that sorts before the last applied. Computed from the recorded
+  ids as a set: ragtime reads them ordered by a millisecond timestamp, and ties come
+  back in whatever order the engine likes, which ragtime's own check reports as a
+  conflict that is not there (measured, SPEC §7)."
+  [dir recorded migrations]
+  (let [recorded (set recorded)
+        ids      (mapv ragtime-protocols/id migrations)
+        position (zipmap ids (range))
+        pending  (vec (remove recorded ids))]
+    (when-let [id (first (sort (remove position recorded)))]
+      (throw (migration-failure dir (str "migration " id " is recorded in " host-migrations-table
+                                         " but not found under " dir)
+                                id nil)))
+    (when-let [last-applied (some->> (seq recorded) (map position) (apply max))]
+      (when-let [id (first (filter #(< (position %) last-applied) pending))]
+        (throw (migration-failure dir (str "migration " id " is new but sorts before "
+                                           (nth ids last-applied) ", which is already applied")
+                                  id nil))))
+    pending))
+
+(defn- migrate!
+  "Applies what is pending and returns how many it applied. A failure names the
+  migration it happened in; everything before it stays applied and recorded, and it
+  does not (SPEC §7). A migration that ran but could not then be recorded is reported
+  the same way, and the next boot runs it again."
+  [ds dir migrations]
+  (let [store   (ragtime-jdbc/sql-database ds {:migrations-table host-migrations-table})
+        unread  #(migration-failure dir (str "the control table " host-migrations-table
+                                             " could not be read or created")
+                                    nil %)
+        pending (plan-migrations dir
+                                 (try (vec (ragtime-protocols/applied-migration-ids store))
+                                      (catch Exception e (throw (unread e))))
+                                 migrations)
+        current (atom nil)
+        started (atom 0)]
+    (try
+      (ragtime/migrate-all store {} migrations
+                           {:strategy (constantly (mapv #(vector :migrate %) pending))
+                            :reporter (fn [_ _ id] (reset! current id) (swap! started inc))})
+      @started
+      (catch InterruptedException e (throw e))
+      (catch Exception e
+        (throw (if-let [id @current]
+                 (migration-failure dir (str "migration " id " failed") id e)
+                 (unread e)))))))
+
+(defn- borrow-once!
+  "Borrows one connection and gives it back, so a database that cannot be reached
+  fails the boot instead of the first request."
+  [^HikariDataSource ds timeout-ms]
+  (try (with-open [^Connection _ (.getConnection ds)])
+       (catch Exception e
+         (throw (ex-info (str "db-base: no connection to the database within " timeout-ms " ms")
+                         {:config-key [:pool :timeout-ms]} e)))))
+
 (defn start
-  "Validates `config`, opens the pool and borrows one connection before
-  returning, so a database that cannot be reached fails the boot instead of the
-  first request. Returns `{:datasource ds}`, where `ds` is a
-  `javax.sql.DataSource` and nothing more.
+  "Validates `config`, loads its migrations, opens the pool, borrows one connection
+  and applies what is pending before returning, so a database that cannot be reached
+  or cannot be migrated fails the boot instead of the first request. Returns
+  `{:datasource ds :migrations-applied n}`, where `ds` is a `javax.sql.DataSource` and
+  nothing more; with `:migrations :none` the count is absent, not zero.
 
     :jdbc-url    non-blank string
     :user        string, \"\" included
     :password    string, \"\" included — never defaulted, never generated
     :pool        {:max integer 1..2147483647 :timeout-ms integer 250..2147483646}
-    :migrations  :none, or {:dir non-blank-string}
+    :migrations  :none, or {:dir classpath-prefix :lock-wait-ms integer 0..2147483647}
 
-  Every failure is `ex-info` carrying `:config-key` as a vector path, except what
-  the host's JVM makes HikariCP throw on its own, such as a
-  `hikaricp.configurationFile` that cannot be found, read or applied (SPEC §6). A pool that
-  opened is closed before a failure leaves this function, so an unreachable
-  database costs `[:pool :timeout-ms]` to borrow plus, at most, HikariCP's wait for
-  its connection-adder on close: the login timeout, which is the timeout plus half a
-  second in whole seconds and never less than one. A driver stuck on a socket spends
-  all of it. HikariCP keeps the login timeout on `DriverManager`, which the JVM
-  shares, so with several pools the wait is the last-constructed pool's."
+  Migration ids sort as strings, so numbers are zero-padded; a `down` never runs.
+
+  Every failure is `ex-info` carrying `:config-key` as a vector path, and
+  `:migration-id` when one migration is to blame, except what the host's JVM makes
+  HikariCP throw on its own, such as a `hikaricp.configurationFile` that cannot be
+  found, read or applied (SPEC §6), and an `Error` or an interrupt, which pass through.
+  A pool that opened is closed before a failure leaves this function, so an unreachable
+  database costs `[:pool :timeout-ms]` to borrow plus, at most, HikariCP's wait for its
+  connection-adder on close: the login timeout, which is the timeout plus half a second
+  in whole seconds and never less than one. A driver stuck on a socket spends all of
+  it. HikariCP keeps the login timeout on `DriverManager`, which the JVM shares, so with
+  several pools the wait is the last-constructed pool's."
   [config]
   (validate! config)
-  (when (map? (:migrations config))
-    ;; Refused rather than skipped: running zero migrations silently is §7's trap.
-    (fail! "[:migrations :dir] is not implemented yet; use :migrations :none"
-           [:migrations :dir]))
   (try (DriverManager/getDriver (:jdbc-url config))
        (catch SQLException e
          (throw (ex-info "db-base: no JDBC driver on the classpath accepts :jdbc-url"
                          {:config-key [:jdbc-url]} e))))
-  (let [ds (open-pool config)]
+  (let [dir    (get-in config [:migrations :dir])
+        source (when dir (load-source dir))
+        ds     (open-pool config)]
     (try
-      (with-open [^Connection _ (.getConnection ds)])
-      {:datasource ds}
+      (borrow-once! ds (get-in config [:pool :timeout-ms]))
+      (cond-> {:datasource ds}
+        source (assoc :migrations-applied (migrate! ds dir source)))
       (catch Throwable t
         (close-after-failure! ds t)
-        (throw (if (instance? Exception t)
-                 (ex-info (str "db-base: no connection to the database within "
-                               (get-in config [:pool :timeout-ms]) " ms")
-                          {:config-key [:pool :timeout-ms]} t)
-                 t))))))
+        (throw t)))))
 
 (defn stop
-  "Closes the pool behind a handle returned by `start`."
+  "Closes the pool behind a handle returned by `start`, from a thread that has been
+  interrupted too, leaving its interrupt flag as it found it."
   [{:keys [datasource]}]
-  (.close ^HikariDataSource datasource))
+  (close-uninterrupted! ^HikariDataSource datasource))
 
 (defn ready?
   "Whether the database answers, through `java.sql.Connection/isValid` on a

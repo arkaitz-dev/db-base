@@ -24,10 +24,15 @@
   a `PrintWriter`, `PrintStream` or `Formatter` given a file name, `ZipFile` and
   `JarFile`, `ServiceLoader`, `java.util.prefs`, `clojure.lang.Compiler/loadFile`,
   `RT/load` and `RT/loadResourceScript`, reflection by a method name built from
-  strings, and a literal handed to ragtime's `load-resources`, which is how §8 will
+  strings, a name written as a regular expression rather than a string, which is how §7's
+  own check for a file ragtime would pass over spells one, and a literal handed to
+  ragtime's `load-resources`, which is how §8 will
   legitimately load its own migration. `clojure.edn` is allowed, because §8 reads EDN from a
   column rather than a file; catching `java.io.FileNotFoundException` is not looking
   for anything; and ragtime reading the directory the host names happens in ragtime.
+  src does list that directory itself, through `resauce`, ragtime's own reader, because
+  §7 refuses a file ragtime would ignore rather than let it pass as a migration that
+  never runs — the host still names the prefix, and nothing here looks for a name.
   Configuration names are checked in every string outside the `ns` form, messages
   included, so a message ending in one reds visibly. Lifting a ban for §7 or anything
   else is a decision recorded with its reason, never a quiet edit.
@@ -66,7 +71,10 @@
 
 (def ^:private anchor-path "dev/arkaitz/db_base.clj")
 
-(def ^:private library-roots #{"ragtime" "dev.arkaitz.db-base"})
+(def ^:private library-roots
+  "`resauce` is ragtime's own resource reader, and src lists the prefix with it for the
+  reason the docstring above gives (decided with the user 2026-09-19)."
+  #{"ragtime" "resauce" "dev.arkaitz.db-base"})
 
 (def ^:private class-roots #{"java" "javax" "clojure.lang" "com.zaxxer.hikari"})
 
@@ -479,8 +487,11 @@
         lib-of       (fn [entry] (first (for [lib (keys accepted-closure)
                                               :when (re-find (maven-entry-pattern lib) entry)]
                                           lib)))]
-    (is (= '#{org.clojure/clojure com.zaxxer/HikariCP dev.weavejester/ragtime.next-jdbc} declared)
-        (str "SPEC §3: deps.edn declares the language, a pool and a migration runner — found " (sort declared)))
+    (is (= '#{org.clojure/clojure com.zaxxer/HikariCP dev.weavejester/ragtime.next-jdbc
+              resauce/resauce}
+           declared)
+        (str "SPEC §3: deps.edn declares the language, a pool, a migration runner and the"
+             " resource reader src calls to list a prefix — found " (sort declared)))
     (when (is (nil? error) (str "precondition: the consumer's classpath was resolved — " error))
       (let [received (set (keep lib-of entries))]
         (testing "controls: the resolution is a consumer's, not this test run's"

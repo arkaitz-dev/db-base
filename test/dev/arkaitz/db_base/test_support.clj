@@ -31,6 +31,14 @@
   [label]
   (str "jdbc:h2:mem:" label "-" (random-uuid) ";DB_CLOSE_DELAY=-1"))
 
+(defn sqlite-file-url
+  "A SQLite database in a fresh temp file, removed when the JVM exits. Not `:memory:`:
+  an in-memory SQLite database is one per connection, and a pool would split it."
+  [label]
+  (let [f (java.io.File/createTempFile (str "db-base-" label "-") ".db")]
+    (.deleteOnExit f)
+    (str "jdbc:sqlite:" (.getAbsolutePath f))))
+
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")
 (def password-sentinel "PASSWORD-SENTINEL-7f3a")

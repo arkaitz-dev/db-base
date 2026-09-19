@@ -1,0 +1,1 @@
+{:id "001-a" :up ["CREATE TABLE m_other (n INTEGER)"] :down []}

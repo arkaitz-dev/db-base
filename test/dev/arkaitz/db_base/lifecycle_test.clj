@@ -170,3 +170,49 @@
                      (pr-str driver))))
           (is (= [] (ts/threads-alive-after-join n #"" 5000))
               "nothing is stuck on a refusal: every thread of the pool is gone"))))))
+
+(deftest stop-closes-the-pool-even-when-the-calling-thread-is-interrupted
+  (let [before (ts/pool-number)
+        handle (db/start {:jdbc-url (ts/h2-memory-url "interrupted-stop") :user "" :password ""
+                          :pool {:max 1 :timeout-ms 1000} :migrations :none})
+        n      (ts/pool-number)]
+    (is (= (inc (or before 0)) n) "precondition: a pool was constructed")
+    (is (= [(str "HikariPool-" n ":housekeeper")]
+           (filter #(.endsWith ^String % ":housekeeper") (map #(.getName ^Thread %) (ts/hikari-threads n))))
+        "precondition: its housekeeper runs, so its absence below means something")
+    (try
+      (.interrupt (Thread/currentThread))
+      (db/stop handle)
+      ;; Read, and so cleared, before the join below and before any later test sees it.
+      (is (true? (Thread/interrupted)) "stop leaves the interrupt flag as it found it")
+      (is (= [] (ts/threads-alive-after-join n #"" 5000))
+          (str "HikariCP's own close returns at once on an interrupted thread and leaves the pool's "
+               "threads running, so stop clears the flag around it"))
+      ;; A throw above would otherwise leave this thread interrupted for every later test.
+      (finally (Thread/interrupted)))))
+
+(deftest an-interrupt-while-the-pool-is-lending-arrives-as-the-borrows-own-failure
+  (let [{:keys [port close!]} (ts/silent-server)
+        cfg    {:jdbc-url (str "jdbc:h2:tcp://127.0.0.1:" port "/mem:" ts/url-sentinel)
+                :user ts/user-sentinel :password ts/password-sentinel
+                :pool {:max 1 :timeout-ms 1000} :migrations :none}
+        before (ts/pool-number)]
+    (try
+      (.interrupt (Thread/currentThread))
+      ;; On this thread, not in a future: the flag belongs to the thread that calls start,
+      ;; and the borrow is bounded by [:pool :timeout-ms] whether the interrupt cuts it
+      ;; short or not.
+      (let [e    (ts/thrown #(db/start cfg))
+            ;; Read, and so cleared, before the join below and before any later test.
+            flag (Thread/interrupted)
+            n    (ts/pool-number)]
+        (is (= (inc (or before 0)) n) "precondition: a pool was constructed")
+        (is (= ["db-base: no connection to the database within 1000 ms" {:config-key [:pool :timeout-ms]}]
+               [(ex-message e) (ex-data e)])
+            "HikariCP turns the interrupt into its own exception, which start reports as the borrow's failure")
+        (is (instance? SQLException (ex-cause e))
+            (str "the pool's exception is the cause: " (pr-str (ex-cause e))))
+        (is (true? flag) "and the interrupt still reaches the caller")
+        (is (= [] (ts/leaks-in "interrupted borrow" e)) "SPEC §6: a secret was echoed")
+        (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) "the pool is closed"))
+      (finally (close!)))))

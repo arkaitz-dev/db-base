@@ -1,0 +1,1 @@
+{:id "002-b" :up db-base-test.migration-fns/forbid-recording! :down []}

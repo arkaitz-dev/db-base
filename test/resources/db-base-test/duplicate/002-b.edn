@@ -1,0 +1,1 @@
+{:id "002-b" :up ["INSERT INTO m_probe (n) VALUES (8)"] :down []}

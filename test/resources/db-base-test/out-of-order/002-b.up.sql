@@ -1,0 +1,1 @@
+ALTER TABLE m_probe ADD COLUMN label VARCHAR(10)

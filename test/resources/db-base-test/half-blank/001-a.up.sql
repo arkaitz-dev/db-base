@@ -1,0 +1,3 @@
+CREATE TABLE m_probe (n INTEGER)
+--;;
+

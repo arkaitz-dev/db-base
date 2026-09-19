@@ -1,0 +1,1 @@
+{:id "001-a" :up db-base-test.migration-fns/interrupt! :down []}

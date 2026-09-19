@@ -5,14 +5,21 @@
  ;; slf4j-api, a facade that logs nowhere unless the host supplies a backend;
  ;; ragtime.next-jdbc brings next.jdbc, which db-base itself does not call.
  ;; `structure_test.clj` enforces what src/ may reach.
+ ;; resauce is ragtime.sql's own resource reader, and src calls it directly to list the
+ ;; prefix and refuse a file ragtime would pass over (§7), so it is declared rather than
+ ;; taken transitively — the rule this file already applies to next.jdbc, from the other
+ ;; side.
  :deps {org.clojure/clojure               {:mvn/version "1.12.5"}
         com.zaxxer/HikariCP               {:mvn/version "7.1.0"}
-        dev.weavejester/ragtime.next-jdbc {:mvn/version "0.12.1"}}
+        dev.weavejester/ragtime.next-jdbc {:mvn/version "0.12.1"}
+        resauce/resauce                   {:mvn/version "0.2.0"}}
 
  :aliases
  ;; SPEC §3 is proven against two engines from different dialect families, one
  ;; strict and one permissive, embedded and never in :deps.
- {:test {:extra-paths ["test" "test/resources"]
+ ;; test/resources-second is a second classpath root holding the same prefix as the
+ ;; first, which is how two jars carrying one migration name reach a host.
+ {:test {:extra-paths ["test" "test/resources" "test/resources-second"]
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                        com.h2database/h2      {:mvn/version "2.5.250"}

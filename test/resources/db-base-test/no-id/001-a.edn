@@ -1,0 +1,2 @@
+[{:up ["CREATE TABLE m_one (n INTEGER)"] :down []}
+ {:up ["CREATE TABLE m_two (n INTEGER)"] :down []}]

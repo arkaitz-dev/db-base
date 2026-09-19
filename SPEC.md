@@ -230,8 +230,14 @@ quantifies. A later borrow and `ready?` are bounded only as far as the paragraph
 say.
 
 **Failure is `ex-info`.** The message names the offending thing, the data carries
-`:config-key` as a vector path, and a driver's own exception is kept as `ex-cause`
-rather than swallowed. That is web-base's measured vocabulary, and a host that already
+`:config-key` as a vector path, and `:migration-id` when one migration of §7 is to blame,
+and a driver's own exception is kept as `ex-cause` rather than swallowed. An `Error`, and
+the `InterruptedException` ragtime raises between two migrations, are not failures of the
+configuration or of the database and pass through unwrapped — after the pool, if one
+opened, has been closed, which HikariCP will not do on an interrupted thread unless the
+flag is cleared around it (measured). An interrupt that lands while the pool is lending
+the boot its connection is HikariCP's to report: it arrives as that pool's `SQLException`,
+wrapped as the borrow's own failure, with the flag still set. That is web-base's measured vocabulary, and a host that already
 dispatches on `:config-key` should not learn a second one. **No exception type of our
 own.** One rule web-base did not need: **the password and the JDBC URL are never
 echoed, in the message or in the data** — presence, never value, as auth-base already
@@ -307,11 +313,34 @@ a directory puts that directory on its classpath. What a prefix means is ragtime
 Migrations are ragtime's files: SQL in an `up` file with an optional `down` beside it, or
 EDN, identified by name and applied in the string order of those names, so numbers are
 zero-padded. A `down` never runs here. An EDN migration may name a function instead of
-SQL; it runs with the datasource, and it is the host's code. Two migrations that load
-under one id — an SQL file and an EDN file named alike — or a source that cannot be read
-stop the boot before any pool exists, naming what was wrong. Two SQL files of one name
-under two classpath roots are not that case: ragtime loads them as a single migration
-that runs both files' statements, and nothing after loading can tell. The host's
+SQL; it runs with the datasource, and it is the host's code.
+
+**What stops the boot before any pool exists**, because each of them is a migration that
+would never run and never say so:
+
+- **a file ragtime would not load as the migration it looks like** — an extension it does
+  not know, `001-a.up.SQL` among them, or an SQL name that is neither `<id>.up.sql` nor
+  `<id>.down.sql`, numbered or not. Ragtime passes the first over and loads the second
+  under an empty id; the refusal names the file. This library lists the prefix itself,
+  with ragtime's own reader, for exactly this;
+- **two migrations under one id**, an SQL file and an EDN file named alike;
+- **a migration with no id**, which is what several migrations in one EDN file with none
+  named come to;
+- **a migration with nothing to run up**: a `down` file with no `up`, an `up` whose
+  statements are all blank — H2 runs an empty statement without a word — or an EDN
+  migration naming a function that does not exist in a namespace that does, which
+  `requiring-resolve` answers with nothing;
+- **a source that cannot be read, or a prefix that cannot even be listed**, naming the
+  prefix rather than the file, with the exception the loading threw as the cause — the
+  EDN reader's, or Clojure's own for a namespace that does not exist: ragtime parses them
+  all before this library sees any of them.
+
+In each case ragtime would otherwise run something other than what the files say — nothing
+at all, one of two migrations sharing an id, or the second of two unnamed ones twice —
+recording what it did under the wrong id, or pass the file over in silence. (Decided with
+the user on 2026-09-14/19.) Two SQL files of one name
+under two classpath roots are that same case: ragtime groups by each file's whole address,
+so they arrive as two migrations under one id. The host's
 run records what it applied in `ragtime_migrations`, ragtime's own default, so a host
 that already used ragtime keeps its history. (Decided with the user on 2026-09-13.)
 
@@ -340,7 +369,9 @@ sets and the source's order, never the order the control table returns, because 
 orders applied ids by a timestamp in milliseconds: measured, H2 recorded two or three
 migrations within one millisecond in 43 runs of 50, and when such ties come back in
 another order, ragtime's own check reports a conflict that is not there, on both test
-engines. (Decided with the user on 2026-09-14.)
+engines. The timestamp is also written in the JVM's own time zone and carries none, so a
+clock change or two instances in different zones can order applied migrations backwards
+with no tie at all. (Decided with the user on 2026-09-14.)
 
 **The migration library underneath is ragtime**, chosen by measurement rather than
 convention, with the measured reasons in `CLAUDE.md`. Two requirements constrained the
