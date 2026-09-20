@@ -68,38 +68,35 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       the whole dialect matrix is fired at H2 and SQLite and pinned engine by engine
       (`dialect_test`), and no string literal in src may spell one of those forms
       (`structure_test`). SPEC §11 records the pair as settled.
-- [ ] **The production engine is unchosen.** The test engines are H2 and SQLite; the
-      2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes
-      auth-base's `take-challenge!` atomic in one statement — but §3 still requires
-      agnosticism. Naming it is a §3 edit plus §8's column types, and needs an explicit
-      decision. **MySQL and MariaDB were measured 2026-09-20** (MariaDB 13.0.2, MySQL
-      26.7.0, with their own drivers), because they were the obvious alternatives:
-      - db-base runs on both **unmodified**. A real `start` applied the three fixtures,
-        a second boot applied none, a source missing one was refused naming it, one more
-        applied, the lock row was given back. ragtime's `varchar(255)` key is 1020 bytes
-        and fits InnoDB's 3072 under the `dynamic` row format both default to — a server
-        configured to the old 767 would not take the control table at all, which is the
-        setting to check before choosing either.
-      - The difference that decides: **MariaDB has `INSERT`/`DELETE … RETURNING` and
-        MySQL 26.7 still does not.** On MySQL the single-use take becomes a conditional
-        `UPDATE` that claims the row and then a read — still atomic, but a different
-        design, and it belongs to auth-base rather than here.
-      - Both refuse `ON CONFLICT`, `LISTEN`, `NOTIFY`, `MERGE`, `jsonb` and a value wider
-        than its column; both take `CREATE TABLE IF NOT EXISTS` and
-        `ON DUPLICATE KEY UPDATE`. Neither belongs in the test pair: they are not
-        embedded, and they refuse nothing H2 does not refuse already.
-      **PostgreSQL 18.6 was measured the same day and the same way**, because it had been
-      leading on an argument and had never been run:
-      - db-base runs on it unmodified too, with the same four boots and the same refusal.
-        Its duplicate key arrives as SQLState `23505` against MySQL's and MariaDB's
-        `23000`/1062, which is why §7 never classifies by SQLSTATE.
-      - It takes everything the dialect list forbids — `ON CONFLICT` both ways,
-        `RETURNING` both ways, `jsonb`, `LISTEN`, `NOTIFY`, the existence clause — and it
-        takes `MERGE` as well, with its own spelling: the suite's `MERGE` is H2's
-        qualified `SET t.v`, which PostgreSQL refuses as an undefined column, so that cell
-        of the matrix measures a spelling rather than the statement.
-      - **pgjdbc honours `isValid`'s timeout** where H2 over TCP does not — see the trap
-        below. That is an operational argument for it that no dialect table shows.
+- [x] **The production engine is PostgreSQL** (decided with the user 2026-09-20, written
+      into SPEC §3 and §11). The test engines stay H2 and SQLite — deliberately *not* the
+      production engine, because a suite that ran on it would accept every
+      PostgreSQL-shaped mistake in silence. §8's types were already measured across five
+      engines and do not change. What the decision unblocks is auth-base's
+      single-statement `take-challenge!`, and that belongs to that repository.
+
+      **All three candidates were run against this library, unmodified, on 2026-09-20**,
+      each with its own driver, the same fixtures and the same four boots — apply three,
+      apply none, refuse a history the source has lost, apply one more. PostgreSQL 18.6,
+      MariaDB 13.0.2 and MySQL 26.7.0 **all passed**, so the decision was not about
+      whether they work:
+      - **`RETURNING` decided it.** PostgreSQL and MariaDB have it; MySQL 26.7 still does
+        not, which turns the single-use take into a conditional `UPDATE` and a read.
+      - **pgjdbc honours `isValid`'s timeout** against a socket that stays open and says
+        nothing, where H2 over TCP does not — see the trap below. No dialect table shows
+        that, and it is what `ready?` is for.
+      - **The duplicate key has three spellings**: `23505` on PostgreSQL, `23000` with
+        vendor 1062 on MySQL and MariaDB. That is why §7 reads the row instead of
+        classifying by SQLSTATE.
+      - **A trap for the MySQL family, if it is ever revisited**: their default collation
+        is case-insensitive, so `001-a` and `001-A` are one id to the control table's
+        primary key while H2 and SQLite take both — §7 refuses duplicates
+        case-sensitively, in Clojure, so this library passes the pair and the engine
+        collides on it. Also ragtime's `varchar(255)` key is 1020 bytes: it fits InnoDB's
+        3072 under the `dynamic` row format both default to, and not the old 767.
+      - **The suite's `MERGE` cell measures a spelling**, not the statement: PostgreSQL 18
+        takes `MERGE` with its own `SET v = …` and refuses the qualified `SET t.v` that H2
+        takes and `dialect_test` fires. SQLite has no `MERGE` at all, so §3's claim holds.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -109,6 +106,10 @@ is touched:
 - [ ] auth-base has no ceremony for attaching a second identifier to an existing
       subject — log in by email, later add a phone. Its §15 lists "the second factor",
       which is a different thing.
+- [ ] With the engine decided (2026-09-20), auth-base's `take-challenge!` can be the one
+      `DELETE … RETURNING` that makes a single-use link atomic, which is the trap listed
+      below as read-then-delete. The adapter belongs there and not here (rule 3), so the
+      action from this side is to raise it, not to write it.
 
 Done, recorded so it is not repeated: the upsert trap of §8 was reported upstream at
 `luminus-framework/jdbc-ring-session` issue 25.
@@ -121,7 +122,12 @@ about their query builder. A data layer is where transitive dependencies breed.
 
 **2 · Nothing here may be PostgreSQL-shaped.** Any JDBC database. The first function
 that assumes `jsonb`, `LISTEN` or `RETURNING` hands the library to one engine, and it
-will be written by someone who only has that engine in front of them.
+will be written by someone who only has that engine in front of them. **Since 2026-09-20
+that someone is us**: the host's engine is PostgreSQL, so the engine that takes every
+forbidden form is now the one in every terminal. That is why the suite runs on H2 and
+SQLite instead, and why `dialect_test` and the literal scan exist — they are the only
+things standing between a convenient `RETURNING` and a library that belongs to one
+vendor.
 
 **3 · It may implement a port defined by a stable third party; it must never depend on
 a sibling module of ours.** Ring's session store is three functions old enough to

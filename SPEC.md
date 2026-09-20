@@ -46,6 +46,27 @@ the host writes SQL for the engine it brought. Nothing in this library may be
 PostgreSQL-shaped, which is a discipline rather than a preference: the moment one
 function assumes `jsonb` or `LISTEN`, the library belongs to one engine.
 
+**The host's engine is PostgreSQL, and saying so changes nothing above.** (Decided with
+the user on 2026-09-20, from measurements taken that day.) All three candidates were run
+against this library unmodified, with the same fixtures and the same four boots:
+PostgreSQL 18.6, MariaDB 13.0.2 and MySQL 26.7.0 each applied the migrations, refused a
+history the source had lost, took the lock and gave it back. So the decision was not made
+on whether they work — they all do — but on two things. `DELETE … RETURNING` makes
+auth-base's single-use take atomic in one statement; MariaDB has it and MySQL 26.7 still
+does not, which would turn that ceremony into a conditional `UPDATE` and a read. And
+pgjdbc honours `isValid`'s timeout against a socket that stays open and answers nothing,
+where H2 over TCP does not (§11) — an operational property no dialect table shows.
+
+**What that decision does not buy.** It is the host's engine, not this library's. Nothing
+here may assume it, and the guards matter *more* now rather than less, because the
+tempting engine is the one everybody has in front of them: the suite still runs on H2 and
+SQLite, **neither of which is the production engine, on purpose** — a suite that ran on
+PostgreSQL would accept every PostgreSQL-shaped mistake in silence — and the scan below
+still refuses to find `ON CONFLICT`, `RETURNING` or `jsonb` spelled anywhere in `src`,
+all of which PostgreSQL takes happily. §8's types were already chosen by measurement
+across five engines and do not change. The day this library is PostgreSQL-shaped, it has
+stopped being what §12 argues it barely deserves to be.
+
 **And nearly all of that agnosticism is free.** The pool takes a JDBC URL, the migration
 run hands the host's SQL to a library, and readiness is `Connection.isValid` — none of
 the three can be engine-shaped, because JDBC and the JDK are doing the work. **Only two
@@ -619,6 +640,7 @@ until the first request meets a missing table.
 | A stored session store ships here, with its own table and its own control table | §8 |
 | The store never upserts, and a zero-row update is correct | §8 |
 | §3 is proven against two engines, not by review: H2 strict beside SQLite permissive, with which engine refuses which form pinned | §3 |
+| The host's engine is PostgreSQL, chosen from three that were all run; the library assumes none of them, and the test pair is deliberately not it | §3 |
 | Integrant is used, not imposed: an optional namespace, one key | §10 |
 | A readiness check belongs here, and its timeout has no default | §6 |
 
