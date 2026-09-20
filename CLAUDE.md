@@ -72,7 +72,22 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes
       auth-base's `take-challenge!` atomic in one statement — but §3 still requires
       agnosticism. Naming it is a §3 edit plus §8's column types, and needs an explicit
-      decision.
+      decision. **MySQL and MariaDB were measured 2026-09-20** (MariaDB 13.0.2, MySQL
+      26.7.0, with their own drivers), because they were the obvious alternatives:
+      - db-base runs on both **unmodified**. A real `start` applied the three fixtures,
+        a second boot applied none, a source missing one was refused naming it, one more
+        applied, the lock row was given back. ragtime's `varchar(255)` key is 1020 bytes
+        and fits InnoDB's 3072 under the `dynamic` row format both default to — a server
+        configured to the old 767 would not take the control table at all, which is the
+        setting to check before choosing either.
+      - The difference that decides: **MariaDB has `INSERT`/`DELETE … RETURNING` and
+        MySQL 26.7 still does not.** On MySQL the single-use take becomes a conditional
+        `UPDATE` that claims the row and then a read — still atomic, but a different
+        design, and it belongs to auth-base rather than here.
+      - Both refuse `ON CONFLICT`, `LISTEN`, `NOTIFY`, `MERGE`, `jsonb` and a value wider
+        than its column; both take `CREATE TABLE IF NOT EXISTS` and
+        `ON DUPLICATE KEY UPDATE`. Neither belongs in the test pair: they are not
+        embedded, and they refuse nothing H2 does not refuse already.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -139,6 +154,13 @@ is any code to break.**
   `-Dh2.delayWrongPasswordMin=0`; a JVM started without it (a REPL, `java -cp`) re-arms it,
   and the wrong-password test's witness says so. Never `delayWrongPasswordMax=0`, which
   means no maximum.
+- **A case-insensitive collation under a case-sensitive id.** MySQL and MariaDB default
+  to `utf8mb4_0900_ai_ci` and `utf8mb4_general_ci`, so two migration ids that differ only
+  in case are one id to the control table's primary key, while H2 and SQLite take both
+  (measured 2026-09-20). §7 refuses duplicate ids case-sensitively, in Clojure, so the
+  pair `001-a` and `001-A` passes this library and then collides in the engine. Loud
+  where it happens, invisible to the suite. The same family differs from itself on table
+  names: `lower_case_table_names` was 2 on macOS against 0 on the Linux image.
 - **A docstring in `src` that spells what the scan forbids.** §3's scan reads every
   string literal, docstrings included, and §5's reads them for configuration file names.
   Explaining *why* the library avoids `ON CONFLICT`, an existence clause on `CREATE
