@@ -183,13 +183,22 @@
 
 (defn- close-after-failure!
   "Closes `resource` without letting a failure to close replace the failure that
-  made closing necessary."
+  made closing necessary — unless closing threw an `Error` where the failure is not
+  one. SPEC §6: an `Error` is not a failure of the configuration or of the database and
+  passes through unwrapped, so then it is the `Error` that leaves, carrying the failure
+  it interrupted as its suppressed. Between two `Error`s the first one keeps the way
+  out, which is what a `try`-with-resources would do and the more informative of the
+  two."
   [^java.lang.AutoCloseable resource ^Throwable failure]
   (try (close-uninterrupted! resource)
        (catch Throwable t
          ;; A resource that rethrows the very failure it was closed for: a throwable
-         ;; cannot suppress itself, and trying would throw instead.
-         (when-not (identical? t failure) (.addSuppressed failure t)))))
+         ;; cannot suppress itself, and trying would throw instead. Asked first, so an
+         ;; `Error` identical to the failure never reaches the branch below.
+         (when-not (identical? t failure)
+           (if (and (instance? Error t) (not (instance? Error failure)))
+             (do (.addSuppressed t failure) (throw t))
+             (.addSuppressed failure t))))))
 
 (defn- migration-failure [dir message id cause]
   (ex-info (str "db-base: " message)

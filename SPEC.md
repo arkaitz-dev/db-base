@@ -270,7 +270,11 @@ names can be checked before it is run. An `Error`, and
 the `InterruptedException` ragtime raises between two migrations, are not failures of the
 configuration or of the database and pass through unwrapped — after the pool, if one
 opened, has been closed, which HikariCP will not do on an interrupted thread unless the
-flag is cleared around it (measured). An interrupt that lands while the pool is lending
+flag is cleared around it (measured). **If closing is what threw the `Error`, that
+`Error` is what leaves**, carrying the failure it interrupted as its suppressed; between
+two `Error`s the first keeps the way out, as a `try`-with-resources would have it. A
+close that throws anything else is suppressed into the failure and changes nothing, which
+is what keeps a boot's refusal an `ex-info`. An interrupt that lands while the pool is lending
 the boot its connection is HikariCP's to report: it arrives as that pool's `SQLException`,
 wrapped as the borrow's own failure, with the flag still set. That is web-base's measured vocabulary, and a host that already
 dispatches on `:config-key` should not learn a second one. **No exception type of our

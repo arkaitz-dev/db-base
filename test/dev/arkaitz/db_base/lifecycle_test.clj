@@ -222,3 +222,47 @@
         (is (= [] (ts/leaks-in "interrupted borrow" e)) "SPEC §6: a secret was echoed")
         (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) "the pool is closed"))
       (finally (close!)))))
+
+(deftest what-closing-the-pool-throws-after-a-failed-boot-decides-what-leaves-start
+  ;; SPEC §6: an Error is not a failure of the configuration or of the database and passes
+  ;; through unwrapped, after the pool has been closed. So when the boot has already failed
+  ;; with an ordinary exception and the close itself throws, which of the two leaves start
+  ;; depends on what the close threw — and either way the pool is really closed, because the
+  ;; stand-in below calls the honest close before throwing.
+  (doseq [[what thrown leaves]
+          [["an Error"     (Error. "sentinel from close")            :what-close-threw]
+           ["an Exception" (RuntimeException. "sentinel from close") :the-boot's-failure]]]
+    (let [closed   (atom nil)
+          var      (ns-resolve 'dev.arkaitz.db-base 'close-uninterrupted!)
+          honest   @var
+          ;; A URL whose INIT fails, so the borrow fails with an exception of its own in
+          ;; about a second, without H2's JVM-global wrong-password delay in the picture.
+          url      (str (ts/h2-memory-url ts/url-sentinel) ";INIT=RUNSCRIPT FROM 'no-such-file.sql'")
+          cfg      {:jdbc-url url :user ts/user-sentinel :password ts/password-sentinel
+                    :pool {:max 1 :timeout-ms 1000} :migrations :none}]
+      (alter-var-root var (constantly (fn [resource]
+                                        (reset! closed resource)
+                                        (honest resource)
+                                        (throw thrown))))
+      (let [left (try (db/start cfg) ::no-throw
+                      (catch Throwable t t)
+                      ;; From this thread and at once, so nothing of this test outlives it.
+                      (finally (alter-var-root var (constantly honest))))]
+        (is (instance? Throwable left)
+            (str "precondition: the boot failed, so there was a pool to close — " (pr-str left)))
+        (is (= [(= :what-close-threw leaves)
+                (if (= :what-close-threw leaves) "sentinel from close"
+                    "db-base: no connection to the database within 1000 ms")
+                (if (= :what-close-threw leaves)
+                  [["ExceptionInfo" "db-base: no connection to the database within 1000 ms"]]
+                  [["RuntimeException" "sentinel from close"]])
+                true]
+               [(identical? thrown left)
+                (ex-message left)
+                (mapv #(vector (.getSimpleName (class %)) (ex-message %))
+                      (.getSuppressed ^Throwable left))
+                (some? @closed)])
+            (str "closing threw " what ": what leaves start, its message, what it carries as"
+                 " suppressed, and that the close was really attempted — " (pr-str left)))
+        (is (true? (.isClosed ^HikariDataSource @closed))
+            (str "closing threw " what ", and the pool it was closing is closed all the same"))))))
