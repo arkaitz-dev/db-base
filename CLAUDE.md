@@ -58,7 +58,10 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       retries N — under the lock SPEC §7 records (decided with the user 2026-09-14).
       Done 2026-09-19: the source is checked before any pool exists, the run sits under
       the C+ lock, and two boots provably overlap in the test.
-- [ ] The two-engine test with its positive control: the proof of §3.
+- [x] The two-engine test with its positive control: the proof of §3. Done 2026-09-20:
+      the whole dialect matrix is fired at H2 and SQLite and pinned engine by engine
+      (`dialect_test`), and no string literal in src may spell one of those forms
+      (`structure_test`). SPEC §11 records the pair as settled.
 - [ ] **The production engine is unchosen.** The test engines are H2 and SQLite; the
       2026-09-11 discussion leaned PostgreSQL for the host — `DELETE … RETURNING` makes
       auth-base's `take-challenge!` atomic in one statement — but §3 still requires

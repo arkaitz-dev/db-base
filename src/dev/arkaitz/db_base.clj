@@ -296,9 +296,10 @@
        (catch SQLException _ nil)))
 
 (defn- lock-table-ready!
-  "Probe, create, probe again. `CREATE TABLE IF NOT EXISTS` is not ANSI — Derby rejects
-  it — and two boots can race for the creation, which this absorbed 200 times out of 200
-  (measured, SPEC §7)."
+  "Probe, create, probe again. The existence clause some engines offer for `CREATE TABLE`
+  is not ANSI — Derby rejects it, and §3's scan will not let src spell it, here or in a
+  docstring — and two boots can race for the creation, which this absorbed 200 times out
+  of 200 (measured, SPEC §7)."
   [ds]
   (when-not (readable? ds lock-table)
     (try (update! ds (str "CREATE TABLE " lock-table " (id VARCHAR(64) NOT NULL PRIMARY KEY,"

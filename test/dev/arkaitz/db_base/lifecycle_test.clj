@@ -27,7 +27,13 @@
   Witnesses come before the bound, so a timing red can only mean timing: the pool
   counter proves a pool was built, the socket's accept count proves the driver
   reached the silent server, and the positive control proves the wrong password
-  is wrong — a fresh H2 memory database accepts any password by creating itself."
+  is wrong — a fresh H2 memory database accepts any password by creating itself.
+
+  **H2 only, and it is not a gap in §3.** Nothing here runs SQL of this library's own:
+  these are HikariCP's bounds, the JDK's, and a driver's refusal to connect. What runs on
+  both engines is §7's lock and its migration run, in `migrations_test`, and the pair
+  itself is checked in `dialect_test`. Two of these claims could not be made on SQLite
+  at all: it takes any password (§6), and a silent socket needs a server to be silent."
   (:require [clojure.test :refer [deftest is testing]]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.test-support :as ts])

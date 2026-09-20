@@ -75,19 +75,27 @@ that scan's own docstring that it is the only signal.
 **The suite runs against two engines from different dialect families**, embedded, with
 no infrastructure, on the test classpath and never in `:deps`. One engine proves
 nothing: a suite that only ever runs on H2 passes with `MERGE` in it, and one that only
-runs on PostgreSQL passes with `ON CONFLICT`. **Which two is not recorded here** — it is
-a tool choice, and tools go in `CLAUDE.md` once they have been run and observed. What is
+runs on PostgreSQL passes with `ON CONFLICT`. **Which two is not this section's business** — it is
+a tool choice, recorded in `CLAUDE.md` and, once run, in §11. What is
 recorded is the criterion, and one measured warning: the pair should be a strict engine
 next to a permissive one, because a strict engine rejects everything non-standard while
 a permissive one catches the opposite mistake — SQLite accepts an over-long `VARCHAR`
 in silence.
 
-**The guard is checked before it is trusted.** Each forbidden dialect is fired directly
-at each test connection and must be seen to fail there. Without that, a test harness
-that has drifted — an engine quietly in a compatibility mode — makes the whole thing
-decorative, permanently and with no symptom. This is not hypothetical: H2 in PostgreSQL
-mode accepts `ON CONFLICT DO NOTHING` and rejects the upsert form, which is neither what
-one would guess nor what it is usually said to do.
+**The guard is checked before it is trusted.** Each forbidden form is fired at a fresh
+connection of each engine, on the URL the suite boots with, and the whole matrix — which
+engine refuses which — is pinned, not only the rule that at least one of the two must
+refuse each form. Without that, a test harness that has drifted — an engine quietly in a
+compatibility mode — makes the whole thing decorative, permanently and with no symptom.
+This is not hypothetical: H2 in PostgreSQL mode accepts `ON CONFLICT DO NOTHING` and
+rejects the upsert form, which is neither what one would guess nor what it is usually
+said to do. Two limits come with it. A mode set on the pool's own path, by one of the JVM
+properties §6 records as the host's, is not on this path and is not seen. And what the
+pair cannot see at all is a form both engines accept: a `TEXT` column, and the existence
+clause on `CREATE TABLE` that §7 avoids — HSQLDB and Derby are what refuse those, so §8's
+column types stand on the measurement across five engines rather than on this suite. The
+source scan names the existence clause, because §7 has code that must not spell it;
+`TEXT` waits for §8 to have any.
 
 **A source scan is worth having and is not enough.** It reads string literals only, and
 case-sensitively, or it fires on this document's own prose and on `(merge …)`; and it
@@ -610,14 +618,12 @@ until the first request meets a missing table.
 | The pool is HikariCP; migrations run on ragtime, under a lock of this library's own | §6, §7 |
 | A stored session store ships here, with its own table and its own control table | §8 |
 | The store never upserts, and a zero-row update is correct | §8 |
-| §3 is proven against two engines, not by review | §3 |
+| §3 is proven against two engines, not by review: H2 strict beside SQLite permissive, with which engine refuses which form pinned | §3 |
 | Integrant is used, not imposed: an optional namespace, one key | §10 |
 | A readiness check belongs here, and its timeout has no default | §6 |
 
 **Open**
 
-- **Which two engines** the suite runs against. §3 states what the pair must satisfy;
-  the names go in `CLAUDE.md` once they have been run.
 - **Reclaiming expired rows**: on write, or by an operator calling a function this
   library exposes. Not on a timer — §9. This is only about space: an expired session is
   already invisible, because §8 puts the expiry in the read, and that part is settled.

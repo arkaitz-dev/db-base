@@ -9,7 +9,11 @@
 
   \"Before anything opens\" is observed through HikariCP's pool counter, which
   moves exactly when a pool is constructed — also for one closed again at once,
-  which is the mutant a thread snapshot cannot see."
+  which is the mutant a thread snapshot cannot see.
+
+  H2 only, and no engine is involved in the claim: every refusal here happens before a
+  URL is opened, so the engine named in it is never reached. What runs on both engines is
+  §7's SQL, in `migrations_test`, and the pair itself is checked in `dialect_test`."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]

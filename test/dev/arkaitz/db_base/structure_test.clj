@@ -52,12 +52,34 @@
   reds falsely but visibly, and the fix is to move it, never to filter the scan.
 
   **What lives in a var root (§9).** Not a datasource, not a box that could hold
-  one. Checked while a pool is open, which is when such a root would be filled."
+  one. Checked while a pool is open, which is when such a root would be filled.
+
+  **What src/ never spells (§3).** The dialects that belong to one engine family:
+  `ON CONFLICT`, `RETURNING`, `MERGE INTO`, `WHEN MATCHED`, `LISTEN`, `NOTIFY` and
+  `jsonb`, matched case-sensitively in every string literal, docstrings included —
+  lower-cased, `merge` is a function of the language and `listen` is English, and the
+  prose of this repository would fire the scan. It is the half of §3's proof that a
+  running suite cannot give: SQL that no test executes is SQL no engine ever refuses.
+  The other half, firing each of those forms at both engines to check the guard before
+  trusting it, is `dialect_test`, and both read the list from `test-support` so the two
+  cannot drift apart. `CREATE TABLE IF NOT EXISTS` is scanned and not fired: both test
+  engines take it and Derby does not, so no cell of that matrix could ever refuse it.
+
+  What this scan cannot see: SQL built by concatenation in pieces, a name written as a
+  regular expression — a `Pattern` is not a string, and a control below says so — and a
+  literal in a `#?(:cljs …)` branch, which the reader this borrows discards by choosing
+  the JVM's own. That reader also rewrites `::` to `:` before anything is read, which
+  hides none of the tokens as they stand and would hide a `::` cast if one were ever
+  added. Runs of whitespace inside a literal are flattened first, so a clause wrapped
+  across lines is still the clause, and metadata docstrings are walked. `TEXT` is not
+  here: §8 measured that HSQLDB and Derby refuse it, and until §8 has code, that
+  measurement is all there is."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [dev.arkaitz.db-base :as db])
+            [dev.arkaitz.db-base :as db]
+            [dev.arkaitz.db-base.test-support :as ts])
   (:import [clojure.lang LineNumberingPushbackReader]
            [java.io File PushbackReader StringReader]
            [java.lang.ref Reference WeakReference]
@@ -599,3 +621,92 @@
                          v)))
             "SPEC §9: no var root holds a datasource, a connection or a box that could hold one"))
       (finally (db/stop handle)))))
+
+(def ^:private dialect-tokens (into ts/dialect-tokens ts/scan-only-tokens))
+
+(defn- string-literals
+  "Every string a source spells: the `ns` form included, because a docstring is a literal
+  and is where someone will justify the upsert §8 forbids, and metadata included, because
+  `^{:doc \"…\"}` is a docstring the plain walk does not reach."
+  [forms]
+  (filter string?
+          (tree-seq #(or (coll? %) (some? (meta %)))
+                    #(concat (when (coll? %) (seq %)) (some-> % meta vals))
+                    forms)))
+
+(defn- dialect-in
+  "Every [token literal] a source spells. Newlines and runs of spaces inside a literal
+  count as one space, so a clause wrapped across two lines is still the clause."
+  [text]
+  (vec (for [literal (string-literals (read-all-forms text))
+             :let    [flat (str/replace literal #"\s+" " ")]
+             token   dialect-tokens
+             :when   (str/includes? flat token)]
+         [token literal])))
+
+(deftest src-spells-no-dialect-that-belongs-to-one-engine-family
+  (testing "positive controls: each shape a dialect would arrive in"
+    (is (= [["ON CONFLICT" "INSERT INTO s (k, v) VALUES (?, ?) ON CONFLICT (k) DO NOTHING"]]
+           (dialect-in (str "(ns x) (defn write! [ds k v]"
+                            " (execute! ds [\"INSERT INTO s (k, v) VALUES (?, ?) ON CONFLICT (k) DO NOTHING\" k v]))")))
+        "the upsert §8 forbids, inside a function body")
+    (is (= [["RETURNING" "DELETE FROM challenge WHERE token = ? RETURNING subject"]]
+           (dialect-in "(ns x) (def take-challenge \"DELETE FROM challenge WHERE token = ? RETURNING subject\")"))
+        "the single-statement take auth-base would want")
+    (is (= [["jsonb" "CREATE TABLE s (data jsonb)"]]
+           (dialect-in "(ns x) (defn ddl [] (str \"CREATE TABLE s (data jsonb)\"))"))
+        "a column type inside a str, which is how this library builds every statement it has")
+    (is (= [["MERGE INTO" "MERGE INTO s t USING v ON (t.k = v.k) WHEN MATCHED THEN UPDATE SET t.v = v.v"]
+            ["WHEN MATCHED" "MERGE INTO s t USING v ON (t.k = v.k) WHEN MATCHED THEN UPDATE SET t.v = v.v"]]
+           (dialect-in (str "(ns x) (def m \"MERGE INTO s t USING v ON (t.k = v.k)"
+                            " WHEN MATCHED THEN UPDATE SET t.v = v.v\")")))
+        "ANSI MERGE, which H2 accepts and only SQLite refuses — one literal can spell two")
+    (is (= [["LISTEN" "LISTEN sessions"] ["NOTIFY" "NOTIFY sessions, 'revoked'"]]
+           (dialect-in "(ns x) (def a \"LISTEN sessions\") (def b \"NOTIFY sessions, 'revoked'\")"))
+        "the sweeper §9 forbids, written the way PostgreSQL would have it")
+    (is (= [["RETURNING" "Reads the row the delete removed, RETURNING it to the caller."]]
+           (dialect-in "(ns x \"Reads the row the delete removed, RETURNING it to the caller.\")"))
+        "a docstring is a literal: the ns form is scanned too")
+    (is (= [["ON CONFLICT" "INSERT INTO s (k) VALUES (?) ON\n     CONFLICT (k) DO NOTHING"]]
+           (dialect-in "(ns x) (def q \"INSERT INTO s (k) VALUES (?) ON\n     CONFLICT (k) DO NOTHING\")"))
+        "a clause wrapped between its own two words is still the clause")
+    (is (= [["ON CONFLICT" "INSERT INTO s (k) VALUES (?) ON CONFLICT (k) DO NOTHING"]]
+           (dialect-in "(ns x) (def ^{:doc \"INSERT INTO s (k) VALUES (?) ON CONFLICT (k) DO NOTHING\"} q 1)"))
+        "a docstring written as metadata, which a walk over the form alone does not reach")
+    (is (= [["IF NOT EXISTS" "CREATE TABLE IF NOT EXISTS db_base_migration_lock (id VARCHAR(64))"]]
+           (dialect-in (str "(ns x) (defn ddl [] (str \"CREATE TABLE IF NOT EXISTS"
+                            " db_base_migration_lock (id VARCHAR(64))\"))")))
+        "SPEC §7: the form Derby rejects, which both test engines take — the scan is the only place it can be said"))
+  (testing "controls: what must not fire"
+    (is (= [] (dialect-in "(ns x) (defn f [a b] (merge a b))")) "the language's own merge")
+    (is (= [] (dialect-in "(ns x) (def s \"on conflict do nothing\")"))
+        "lower case is prose: matching it case-insensitively would fire on this repository's own writing")
+    (is (= [] (dialect-in "(ns x) (def s \"a conflict between two instances, returning nothing\")"))
+        "the words alone, which is how §7's own messages talk")
+    (is (= [] (dialect-in "(ns x) (def p #\"RETURNING\")"))
+        "a regular expression is a Pattern, not a string — stated as a control because it is what this scan cannot see"))
+  (is (= #{"ON CONFLICT" "RETURNING" "MERGE INTO" "WHEN MATCHED" "LISTEN" "NOTIFY" "jsonb"
+           "IF NOT EXISTS"}
+         (set dialect-tokens))
+      (str "every token above has a control of its own, written by hand: adding one to the"
+           " shared list means writing its control here, and this is what says so"))
+  (let [root (src-root)]
+    (is (some? root) (str anchor-path " is not on the classpath as a file"))
+    (when root
+      (let [files (source-files root)
+            text  (into {} (for [[path f] files] [path (slurp f)]))]
+        (testing "the scan reached the real sources"
+          (is (contains? files anchor-path) (str "precondition: " anchor-path " not among " (keys files)))
+          (let [literals (string-literals (read-all-forms (get text anchor-path)))]
+            (is (= [true true] [(boolean (some #(str/includes? % "CREATE TABLE ") literals))
+                                (boolean (some #(str/includes? % "INSERT INTO ") literals))])
+                (str "precondition: the walk sees the SQL that lives inside function bodies, not"
+                     " only docstrings — found " (count literals) " literals"))))
+        (is (= [] (vec (for [[path source] (sort text)
+                             hit           (dialect-in source)]
+                         (into [path] hit))))
+            (str "SPEC §3: src spells a dialect that belongs to one engine family. The only SQL"
+                 " of this library's own is §7's lock — a dialect of one engine family (§3),"
+                 " or the existence clause §7 avoids because Derby rejects it. For the forms the"
+                 " test pair can refuse, dialect_test proves this list means something; for the"
+                 " existence clause, which both engines take, this scan is all there is"))))))

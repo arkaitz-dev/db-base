@@ -39,6 +39,21 @@
     (.deleteOnExit f)
     (str "jdbc:sqlite:" (.getAbsolutePath f))))
 
+(def dialect-tokens
+  "The spellings SPEC §3 and CLAUDE.md name or imply for a dialect that belongs to one
+  engine family, each written with the shortest head that identifies it: a longer one
+  stops matching the moment someone writes the clause with its own column list. Shared,
+  because §3 is proven twice — `dialect_test` fires each of these at both engines and
+  `structure_test` refuses to find one spelled in src — and two lists would drift."
+  ["ON CONFLICT" "RETURNING" "MERGE INTO" "WHEN MATCHED" "LISTEN" "NOTIFY" "jsonb"])
+
+(def scan-only-tokens
+  "Forbidden in src, and invisible to the engines: both H2 and SQLite take
+  `CREATE TABLE IF NOT EXISTS`, which SPEC §7 refuses because Derby rejects it. A form
+  the pair accepts cannot be a cell of `dialect_test`'s matrix — nothing would refuse it
+  — so the scan is the only place it can be said at all."
+  ["IF NOT EXISTS"])
+
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")
 (def password-sentinel "PASSWORD-SENTINEL-7f3a")
