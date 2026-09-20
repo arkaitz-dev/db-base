@@ -17,9 +17,12 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 **Specification settled 2026-09-09. `start` and `stop` written 2026-09-12, `ready?`
 2026-09-13, the migration run 2026-09-19, its lock 2026-09-19, and §3's two-engine
-proof 2026-09-20.** What §6 and §7 specify is written and tested; §8's session store and
-§10's Integrant namespace are not, and §12 is the argument for keeping it that way until
-a second consumer asks. Commands go in this file **only once they have actually been run
+proof 2026-09-20, and §10's Integrant key the same day.** What §6, §7 and §10 specify is
+written and tested; §8's session store is not. §12's gate is *a consumer that asked* —
+one, not two; two is its **exit** condition, which is a different sentence — and the key
+entered on that basis: the host now being built in this repository serves HTTP through
+web-base, which is wired with Integrant, so the library ships the key rather than making
+that host write it. §8 stays out until the same gate opens for it. Commands go in this file **only once they have actually been run
 and observed to work**, never from convention. Observed:
 
     clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."

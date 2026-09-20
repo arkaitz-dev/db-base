@@ -2,7 +2,8 @@
   "Witnesses shared by the lifecycle and configuration tests. Each exists because
   the property it observes has no other synchronous, attributable signal."
   (:import [clojure.lang ExceptionInfo]
-           [java.net InetAddress ServerSocket Socket]))
+           [java.net InetAddress ServerSocket Socket]
+           [java.sql Connection DriverManager ResultSet]))
 
 (defn attempt
   "The refusal as `[message data]`, or `::no-throw`. Catches `ExceptionInfo` only:
@@ -57,6 +58,17 @@
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")
 (def password-sentinel "PASSWORD-SENTINEL-7f3a")
+
+(defn query
+  "Every row of `sql`, as vectors, through a connection of the caller's own — never the
+  pool's, so what it reads is what the database holds rather than what a handle says."
+  [url sql]
+  (with-open [^Connection c (DriverManager/getConnection url user-sentinel password-sentinel)
+              st (.createStatement c)
+              ^ResultSet rs (.executeQuery st sql)]
+    (let [n (.getColumnCount (.getMetaData rs))]
+      (loop [acc []]
+        (if (.next rs) (recur (conj acc (mapv #(.getObject rs (int %)) (range 1 (inc n))))) acc)))))
 
 (defn leaks-in
   "Every `[label field secret]` where the message or the printed data of `e`

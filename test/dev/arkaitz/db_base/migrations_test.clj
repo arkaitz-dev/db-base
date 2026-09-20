@@ -39,20 +39,12 @@
    :pool {:max 2 :timeout-ms 5000}
    :migrations {:dir (str "db-base-test/" prefix) :lock-wait-ms 1000}})
 
-(defn- query [url sql]
-  (with-open [^Connection c (DriverManager/getConnection url ts/user-sentinel ts/password-sentinel)
-              st (.createStatement c)
-              ^ResultSet rs (.executeQuery st sql)]
-    (let [n (.getColumnCount (.getMetaData rs))]
-      (loop [acc []]
-        (if (.next rs) (recur (conj acc (mapv #(.getObject rs (int %)) (range 1 (inc n))))) acc)))))
-
 (defn- execute! [url sql]
   (with-open [^Connection c (DriverManager/getConnection url ts/user-sentinel ts/password-sentinel)
               st (.createStatement c)]
     (.execute st sql)))
 
-(defn- recorded [url] (mapv first (query url "SELECT id FROM ragtime_migrations ORDER BY id")))
+(defn- recorded [url] (mapv first (ts/query url "SELECT id FROM ragtime_migrations ORDER BY id")))
 
 (defn- tables
   "Table names in lower case: H2 reports them upper-cased."
@@ -81,7 +73,7 @@
   [f]
   (first (ts/elapsed-ms 15000 f)))
 
-(defn- lock-rows [url] (query url "SELECT id, holder, acquired_at FROM db_base_migration_lock"))
+(defn- lock-rows [url] (ts/query url "SELECT id, holder, acquired_at FROM db_base_migration_lock"))
 
 (defn- running
   "Runs `f` on a daemon thread; returns the thread and a promise of [:ok v] or [:threw e]."
@@ -208,17 +200,17 @@
         (finally (db/stop handle))))
     (is (= ["001-a" "002-b" "003-c"] (recorded url))
         (str engine ": ragtime_migrations records the three direct children, not the one in a subdirectory"))
-    (is (= [[7 "seven"]] (query url "SELECT n, label FROM m_probe"))
+    (is (= [[7 "seven"]] (ts/query url "SELECT n, label FROM m_probe"))
         (str engine ": they ran in the source's order: the table, then its column, then the row that needs it"))
     (is (= {:migrations-applied 0} (boot (config url "three"))) (str engine ": a second boot applies nothing"))
-    (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]] [(recorded url) (query url "SELECT n, label FROM m_probe")])
+    (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]] [(recorded url) (ts/query url "SELECT n, label FROM m_probe")])
         (str engine ": and runs nothing again — m_probe has no key, so a rerun would add a row, not fail"))))
 
 (deftest migration-ids-are-applied-in-the-order-of-their-names-as-strings
   (doseq [[engine url] (engines)]
     (is (= {:migrations-applied 2} (boot (config url "string-order")))
         (str engine ": 10-b creates the table 9-a writes to, which is the string order, not the numeric one"))
-    (is (= [["10-b" "9-a"] [[9]]] [(recorded url) (query url "SELECT n FROM m_probe")]) engine)))
+    (is (= [["10-b" "9-a"] [[9]]] [(recorded url) (ts/query url "SELECT n FROM m_probe")]) engine)))
 
 (deftest a-migration-that-fails-leaves-the-ones-before-it-recorded-names-itself-and-closes-the-pool
   (doseq [[engine url] (engines)]
@@ -230,14 +222,14 @@
       (is (instance? SQLException (ex-cause e)) (str engine ": the driver's refusal is the cause: " (pr-str (ex-cause e))))
       (is (= [] (ts/leaks-in engine e)) (str engine ": SPEC §6: a secret was echoed"))
       (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) (str engine ": the pool is closed"))
-      (is (= [["001-a"] []] [(recorded url) (query url "SELECT n FROM m_probe")])
+      (is (= [["001-a"] []] [(recorded url) (ts/query url "SELECT n FROM m_probe")])
           (str engine ": 001 is applied and recorded, 002 is not recorded, and nothing after it ran"))
       (is (= [true false] [(contains? (tables url) "m_probe") (contains? (tables url) "m_down_ran")])
           (str engine ": 002's down was not run to unwind it — its down file would leave a table behind"))
       (is (= [] (lock-rows url)) (str engine ": and the lock is given back after the failure")))
     (is (= {:migrations-applied 2} (boot (config url "fixed")))
         (str engine ": the next boot, on a fixed 002, attempts 002 again and then 003"))
-    (is (= [["001-a" "002-b" "003-c"] [[8 "eight"]]] [(recorded url) (query url "SELECT n, label FROM m_probe")])
+    (is (= [["001-a" "002-b" "003-c"] [[8 "eight"]]] [(recorded url) (ts/query url "SELECT n, label FROM m_probe")])
         engine))
   (testing "an Error from a migration is not wrapped, and the pool is still closed"
     (reset! fns/thrown-error nil)
@@ -321,7 +313,7 @@
         (is (= (inc (or before 0)) n) (str engine ": " label ": precondition: a pool was constructed"))
         (is (= expected (pair e)) (str engine ": " label))
         (is (= [] (ts/threads-alive-after-join n #":housekeeper$" 5000)) (str engine ": " label ": the pool is closed"))
-        (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]] [(recorded url) (query url "SELECT n, label FROM m_probe")])
+        (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]] [(recorded url) (ts/query url "SELECT n, label FROM m_probe")])
             (str engine ": " label ": nothing was applied or recorded, not even the migration sorting last"))))))
 
 (deftest recorded-ids-that-share-a-timestamp-and-come-back-out-of-order-are-not-a-conflict
@@ -388,7 +380,7 @@
   (doseq [[engine url] (engines)]
     (is (= {:migrations-applied 1} (boot (config url "numbered")))
         (str engine ": the two numbered up files are one migration, not two"))
-    (is (= [["001-a"] [[1]]] [(recorded url) (query url "SELECT n FROM m_probe")])
+    (is (= [["001-a"] [[1]]] [(recorded url) (ts/query url "SELECT n FROM m_probe")])
         (str engine ": recorded once, and both of its statements ran, the table before the row"))))
 
 (deftest a-prefix-that-cannot-be-listed-is-refused-as-ex-info-naming-it
@@ -454,7 +446,7 @@
         (is (= [1 true] [@fns/gate-calls (true? @fns/gate-exit)])
             (str engine ": the gated migration ran once, and the test released it rather than its own bound"))
         (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]] []]
-               [(recorded url) (query url "SELECT n, label FROM m_probe") (lock-rows url)])
+               [(recorded url) (ts/query url "SELECT n, label FROM m_probe") (lock-rows url)])
             (str engine ": recorded once, written once, and the lock given back"))))))
 
 (deftest a-lock-row-left-by-a-holder-that-died-stops-every-boot-until-the-repair-it-names
@@ -531,7 +523,7 @@
                  (execute! % "CREATE VIEW db_base_migration_lock AS SELECT id FROM gone")
                  (execute! % "DROP TABLE gone"))]]]
     (break! url)
-    (is (= :threw (try (query url "SELECT COUNT(*) FROM db_base_migration_lock") :read
+    (is (= :threw (try (ts/query url "SELECT COUNT(*) FROM db_base_migration_lock") :read
                        (catch Exception _ :threw)))
         (str engine ": precondition: the name is taken by something no SELECT can read"))
     (let [before (ts/pool-number)
@@ -619,7 +611,7 @@
         (is (= [] (ts/threads-alive-after-join (ts/pool-number) #":housekeeper$" 5000))
             (str engine ": and its pool is closed")))
       (is (= [["001-a" "002-b" "003-c"] [[7 "seven"]]]
-             [(recorded url) (query url "SELECT n, label FROM m_probe")])
+             [(recorded url) (ts/query url "SELECT n, label FROM m_probe")])
           (str engine ": the migrations applied and were recorded — the boot stops, the schema stands")))))
 
 (deftest a-lock-given-back-as-the-wait-runs-out-is-taken-not-refused
@@ -679,7 +671,7 @@
     (is (= {:migrations-applied 1} (bounded #(boot (config url "plus-one"))))
         (str engine ": start applies the one that is pending instead of refusing"))
     (is (= [["001-a" "002-b" "003-c" "004-d"] [[7 "seven"] [4 "four"]] []]
-           [(recorded url) (query url "SELECT n, label FROM m_probe") (lock-rows url)])
+           [(recorded url) (ts/query url "SELECT n, label FROM m_probe") (lock-rows url)])
         (str engine ": and only that one ran, recorded, with the lock given back"))
     (execute! url "DELETE FROM ragtime_migrations")
     (doseq [id ["002-b" "003-c" "001-a" "004-d"]]

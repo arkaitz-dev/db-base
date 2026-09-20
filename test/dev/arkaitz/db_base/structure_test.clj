@@ -95,8 +95,11 @@
 
 (def ^:private library-roots
   "`resauce` is ragtime's own resource reader, and src lists the prefix with it for the
-  reason the docstring above gives (decided with the user 2026-09-19)."
-  #{"ragtime" "resauce" "dev.arkaitz.db-base"})
+  reason the docstring above gives (decided with the user 2026-09-19). `integrant` is
+  SPEC §10's, and only `dev.arkaitz.db-base.integrant` may name it — which this scan
+  cannot express, since it asks the same question of every file, so a scan of its own
+  says that (decided with the user 2026-09-20, when the first host asked)."
+  #{"ragtime" "resauce" "integrant" "dev.arkaitz.db-base"})
 
 (def ^:private class-roots #{"java" "javax" "clojure.lang" "com.zaxxer.hikari"})
 
@@ -206,10 +209,16 @@
       nom)))
 
 (defn- walk-with-tags
-  "Every node, plus the `:tag` of any node that carries one: a hint such as
-  `^org.slf4j.Logger` names a class and lives in metadata a plain walk skips."
+  "Every node, plus the `:tag` of any node that carries one — a hint such as
+  `^org.slf4j.Logger` names a class and lives in metadata a plain walk skips — and, for a
+  tagged literal, its tag and what it wraps: `#ig/ref :x` is a `TaggedLiteral`, which is
+  not a collection, so `tree-seq` stops at it and both names inside would be invisible."
   [form]
-  (mapcat (fn [node] (cons node (some-> node meta :tag list)))
+  (mapcat (fn [node]
+            (concat [node]
+                    (some-> node meta :tag list)
+                    (when (instance? clojure.lang.TaggedLiteral node)
+                      (cons (:tag node) (walk-with-tags (:form node))))))
           (tree-seq coll? seq form)))
 
 (defn- body-nodes [forms]
@@ -470,7 +479,13 @@
     com.github.seancorfield/next.jdbc    "ragtime.next-jdbc's"
     camel-snake-kebab/camel-snake-kebab  "next.jdbc's"
     org.clojure/java.data                "next.jdbc's"
-    resauce/resauce                      "ragtime.sql's"})
+    resauce/resauce                      "ragtime.sql's"
+    ;; Decided 2026-09-20, when the first host asked to wire with Integrant (SPEC §10,
+    ;; §12). It reaches every consumer, which is the cost of the one key
+    ;; `dev.arkaitz.db-base.integrant` ships, and web-base pays the same cost for the
+    ;; same reason. A consumer that does not use Integrant loads neither.
+    integrant/integrant                  "SPEC §10's optional key, loaded only by dev.arkaitz.db-base.integrant"
+    weavejester/dependency               "integrant's"})
 
 (defn- maven-entry-pattern [lib]
   (let [group    (namespace lib)
@@ -510,10 +525,11 @@
                                               :when (re-find (maven-entry-pattern lib) entry)]
                                           lib)))]
     (is (= '#{org.clojure/clojure com.zaxxer/HikariCP dev.weavejester/ragtime.next-jdbc
-              resauce/resauce}
+              resauce/resauce integrant/integrant}
            declared)
-        (str "SPEC §3: deps.edn declares the language, a pool, a migration runner and the"
-             " resource reader src calls to list a prefix — found " (sort declared)))
+        (str "SPEC §3: deps.edn declares the language, a pool, a migration runner, the"
+             " resource reader src calls to list a prefix, and §10's Integrant, which only"
+             " the optional namespace may load — found " (sort declared)))
     (when (is (nil? error) (str "precondition: the consumer's classpath was resolved — " error))
       (let [received (set (keep lib-of entries))]
         (testing "controls: the resolution is a consumer's, not this test run's"
@@ -549,9 +565,16 @@
            (.getName (class (org.slf4j.LoggerFactory/getILoggerFactory))))
         "corroboration: SLF4J itself found no provider")))
 
-(defn- module-namespaces []
-  (for [[path _] (source-files (src-root))]
-    (symbol (-> path (str/replace #"\.clj[cs]?$" "") (str/replace "/" ".") (str/replace "_" "-")))))
+(defn- module-namespaces
+  "Every namespace of the library, from the sources on disk and then loaded. Read from
+  disk because a filtered run loads only what it needs, and a walk over `all-ns` would
+  miss the rest; loaded because `the-ns` answers only for what is already there, and an
+  optional namespace — §10's Integrant one — is exactly what nothing else requires."
+  []
+  (for [[path _] (source-files (src-root))
+        :let [nom (symbol (-> path (str/replace #"\.clj[cs]?$" "") (str/replace "/" ".")
+                              (str/replace "_" "-")))]]
+    (do (require nom) nom)))
 
 (defn- children
   "What `x` holds, one hop out. Containers are opened through their public API —
@@ -794,3 +817,76 @@
              " native image built with --initialize-at-build-time that value is baked into"
              " every instance, and §9's scan would not see it because it hunts state rather"
              " than constants"))))
+
+(def ^:private integrant-exempt-path "dev/arkaitz/db_base/integrant.clj")
+(def ^:private integrant-exempt-ns 'dev.arkaitz.db-base.integrant)
+
+(defn- integrant-name?
+  "A name that ties a source to Integrant: one in `integrant` or `integrant.*`, the tag
+  of an `#ig/…` literal, or the exempt namespace itself — requiring that namespace from
+  anywhere else is how Integrant stops being optional and starts being imposed."
+  [x]
+  (let [hit? (fn [s] (and s (or (= s "integrant") (str/starts-with? s "integrant."))))]
+    (and (or (symbol? x) (keyword? x))
+         (boolean (or (hit? (namespace x))
+                      (hit? (name x))
+                      ;; Only in namespace position: `#ig/ref` and `ig/init-key` are theirs,
+                      ;; while a bare `ig` is a name anyone may bind, and a scan that reds on
+                      ;; one reports a local rather than a dependency.
+                      (= "ig" (namespace x))
+                      (= (str integrant-exempt-ns) (namespace x))
+                      (= (str integrant-exempt-ns) (str x)))))))
+
+(defn- integrant-in [text]
+  (vec (distinct (filter integrant-name? (mapcat walk-with-tags (read-all-forms text))))))
+
+(deftest only-the-integrant-namespace-references-integrant
+  ;; SPEC §10: Integrant is used, not imposed. A require of it anywhere else compiles,
+  ;; loads and passes every other test — this scan is the only signal, which is why
+  ;; `library-roots` above lets `integrant` through and leaves the boundary to be said
+  ;; here. The exempt file is the control that proves the scan reads the sources: run
+  ;; over it alone, it must find exactly what that file legitimately spells.
+  (testing "positive controls: each shape a reference arrives in"
+    (is (= '[integrant.core] (integrant-in "(ns x (:require [integrant.core :as ig]))"))
+        "a plain require, which is what names them — an alias alone is a name anyone may bind")
+    (is (= '[integrant] (integrant-in "(ns x (:require [integrant [core :as ig]]))"))
+        "a vector prefix-list require, where the prefix is what the reader leaves")
+    (is (= '[integrant.core] (integrant-in "(ns x #?(:clj (:require [integrant.core])))"))
+        "a require inside a reader conditional")
+    (is (= '[integrant.core/init] (integrant-in "(ns x) (defn f [c] (integrant.core/init c))"))
+        "a fully qualified call with no require")
+    (is (= [:integrant.core/system] (integrant-in "(ns x) (def k :integrant.core/system)"))
+        "a keyword of theirs")
+    (is (= '[ig/ref] (integrant-in "(ns x) (def c {:a #ig/ref :b})"))
+        "the tag of a literal, which is not a collection and hides what it wraps")
+    (is (= [integrant-exempt-ns] (integrant-in (str "(ns x (:require [" integrant-exempt-ns "]))")))
+        "and the exempt namespace named from elsewhere, which imposes it just as surely"))
+  (testing "controls: what must not fire"
+    (is (= [] (integrant-in "(ns x (:require [dev.arkaitz.db-base :as db]))")) "this library itself")
+    (is (= [] (integrant-in "(ns x) (def s \"an integrant part of the whole\")"))
+        "the English word in a string")
+    (is (= [] (integrant-in "(ns x) (defn ignore [_] nil)")) "a name that merely starts with those letters")
+    (is (= [] (integrant-in "(ns x) (defn f [{:keys [ig]}] ig)"))
+        "a local someone called ig, which is a binding and not a dependency"))
+  (let [root (src-root)]
+    (is (some? root) (str anchor-path " is not on the classpath as a file"))
+    (when root
+      (let [files (source-files root)]
+        (testing "preconditions: the scan reads the sources, and the exemption is what makes it green"
+          (is (contains? files anchor-path) (str "precondition: " anchor-path " not among " (keys files)))
+          (is (contains? files integrant-exempt-path)
+              (str "precondition: the exempt file is where its name says; if it moved, this scan"
+                   " has been exempting nothing — found " (sort (keys files))))
+          ;; Filtered rather than spelled out: what this proves is that the scan reads the
+          ;; file on disk and sees integrant there. Pinning every name the file happens to
+          ;; contain would red on any honest edit to it, which is coupling, not signal.
+          (is (= '[integrant.core] (filterv #{'integrant.core}
+                                            (integrant-in (slurp (get files integrant-exempt-path)))))
+              (str "the exempt file does reference integrant, read from disk: a scan that found"
+                   " nothing there would be finding nothing anywhere")))
+        (is (= [] (vec (for [[path file] (sort (dissoc files integrant-exempt-path))
+                             offender    (integrant-in (slurp file))]
+                         [path offender])))
+            (str "SPEC §10: Integrant is used, not imposed — only " integrant-exempt-ns
+                 " may name it, and a require of it elsewhere compiles, loads and passes every"
+                 " other test"))))))

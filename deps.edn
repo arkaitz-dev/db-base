@@ -12,7 +12,16 @@
  :deps {org.clojure/clojure               {:mvn/version "1.12.5"}
         com.zaxxer/HikariCP               {:mvn/version "7.1.0"}
         dev.weavejester/ragtime.next-jdbc {:mvn/version "0.12.1"}
-        resauce/resauce                   {:mvn/version "0.2.0"}}
+        resauce/resauce                   {:mvn/version "0.2.0"}
+        ;; SPEC §10: Integrant is used, not imposed. Required only by
+        ;; dev.arkaitz.db-base.integrant, which ships one key's init-key and halt-key!
+        ;; for a host that wires with it — both of them, because Integrant's own
+        ;; halt-key! default does nothing and says nothing; nothing else may load it,
+        ;; and a scan enforces that,
+        ;; because an illegal require compiles, loads and passes every other test.
+        ;; Added 2026-09-20, when the first host asked for it — §12 forbids anything
+        ;; entering the scope before that.
+        integrant/integrant               {:mvn/version "1.0.1"}}
 
  :aliases
  ;; SPEC §3 is proven against two engines from different dialect families, one

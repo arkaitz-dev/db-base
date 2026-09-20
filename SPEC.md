@@ -629,16 +629,23 @@ implementations of published third-party ports whose tables are its own.
 **Out**: everything in §9, the engine, the schema, the SQL, and the driver.
 
 **Integrant is used, not imposed.** `start` and `stop` are ordinary functions, and an
-optional namespace ships the `init-key` methods for a host that wires with Integrant;
+optional namespace ships one key's `init-key` **and** `halt-key!` — the second because
+Integrant's own default for it does nothing and says nothing, so a missing method leaves
+`ig/halt!` returning happily over a pool that is still open — for a host that wires with
+Integrant;
 a host that does not is not blocked. This is web-base's rule rather than a preference of
 this library's, and it is stated there as the general one: it is what well-behaved
 Clojure libraries do. The namespace is the only place that may reference Integrant, and
 a scan enforces it, because an illegal require compiles, loads and passes every other
 test.
 
-**One key, never two.** The pool and its migrations are one component. Two keys let a
-host wire the pool and omit the migrations, which deletes §7's guarantee with no symptom
-until the first request meets a missing table.
+**One key, never two.** The pool and its migrations are one component, and the key is
+`:dev.arkaitz.db-base/database` — written here so that renaming it is an edit of this
+document rather than a drift. Two keys let a host wire the pool and omit the migrations,
+which deletes §7's guarantee with no symptom until the first request meets a missing
+table. (Written 2026-09-20: §12's gate is that nothing enters without a consumer that
+asked, and the first host — the demo of this repository, which serves HTTP through
+web-base and is wired the way web-base is — asked.)
 
 ## 11 · Settled, and open
 

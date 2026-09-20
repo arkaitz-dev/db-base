@@ -24,7 +24,10 @@ clojure -X:deps git-resolve-tags
 A consumer receives a connection pool and a migration runner, and nothing else: no JSON
 codec, no logging backend, no opinion about a query builder. HikariCP brings `slf4j-api`,
 a facade that logs nowhere until the host supplies a backend, and ragtime brings
-`next.jdbc`, which this library does not call. A test enforces that list.
+`next.jdbc`, which this library does not call. Integrant arrives too, with its own
+`weavejester/dependency` — 23 KB between them — for the optional key below; a host that
+never requires `dev.arkaitz.db-base.integrant` loads neither. A test enforces that list,
+and a new arrival on it is a decision recorded with its reason.
 
 ## The three functions
 
@@ -43,6 +46,13 @@ a facade that logs nowhere until the host supplies a backend, and ragtime brings
 (db/ready? handle 2)         ; does the database answer, within 2 seconds
 (db/stop handle)             ; closes the pool, returns nil
 ```
+
+A host that wires with Integrant asks for `:dev.arkaitz.db-base/database` instead, whose
+value is that same configuration map and whose `init-key` and `halt-key!` are `start` and
+`stop`. Requiring `dev.arkaitz.db-base.integrant` is what installs it. It is **one** key
+on purpose: the pool and its migrations are one component, and two keys would let a host
+wire the pool and skip the migrations — which is the schema one deploy behind, with no
+symptom until a request meets a missing table.
 
 `start` refuses the configuration before it opens anything, then loads and checks the
 migrations before any pool exists, then opens the pool, borrows one connection to prove
