@@ -454,6 +454,16 @@
                                e))))
         applied))))
 
+(defn- delegates-to?
+  "Whether `loader` can see what `origin` loaded: `origin` is that loader, one of the
+  loaders it delegates to, or the bootstrap. A parent cannot see its child's classes, and
+  that asymmetry is the whole case below. Asked by walking the chain rather than by
+  loading the name, which §5 forbids src to do and §3's scan enforces."
+  [^ClassLoader loader ^ClassLoader origin]
+  (or (nil? origin)
+      (boolean (some #(identical? origin %)
+                     (take-while some? (iterate #(.getParent ^ClassLoader %) loader))))))
+
 (defn- borrow-once!
   "Borrows one connection and gives it back, so a database that cannot be reached
   fails the boot instead of the first request."
@@ -493,10 +503,20 @@
   several pools the wait is the last-constructed pool's."
   [config]
   (validate! config)
-  (try (DriverManager/getDriver (:jdbc-url config))
-       (catch SQLException e
-         (throw (ex-info "db-base: no JDBC driver on the classpath accepts :jdbc-url"
-                         {:config-key [:jdbc-url]} e))))
+  (let [driver (try (DriverManager/getDriver (:jdbc-url config))
+                    (catch SQLException e
+                      (throw (ex-info "db-base: no JDBC driver on the classpath accepts :jdbc-url"
+                                      {:config-key [:jdbc-url]} e))))]
+    ;; HikariCP asks `DriverManager` the same question from its own class, and
+    ;; `DriverManager` answers by the CALLER's loader: `Class.forName(name, true, callerCL)`
+    ;; has to come back as the very class the driver is. A driver added to a running JVM —
+    ;; `add-lib` at a REPL — is visible to the loader Clojure compiles this into and not to
+    ;; HikariCP's, and the pool's own refusal for that carries the JDBC URL (measured
+    ;; 2026-09-20), so it is refused here instead, before anything opens.
+    (when-not (delegates-to? (.getClassLoader HikariDataSource)
+                             (.getClassLoader ^Class (class driver)))
+      (throw (ex-info "db-base: the JDBC driver that accepts :jdbc-url is not one the pool can use"
+                      {:config-key [:jdbc-url] :driver (.getName (class driver))}))))
   (let [dir    (get-in config [:migrations :dir])
         source (when dir (load-source dir))
         ds     (open-pool config)]

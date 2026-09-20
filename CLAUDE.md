@@ -179,6 +179,14 @@ is any code to break.**
   pair `001-a` and `001-A` passes this library and then collides in the engine. Loud
   where it happens, invisible to the suite. The same family differs from itself on table
   names: `lower_case_table_names` was 2 on macOS against 0 on the Linux image.
+- **A value minted at load time, kept in a var root.** `(def holder (random-uuid))` looks
+  harmless and is fine on a JVM. Under a native image built the way Clojure images are
+  built — `--initialize-at-build-time` — that value is computed while the class
+  initialises and **baked into the binary**: the same in every run of every instance, with
+  no error and no warning (measured 2026-09-20 on GraalVM CE 25.3.4.1). §9's scan does not
+  catch it, because it hunts state and this is a constant. The lock holder of §7 is minted
+  inside a function, per boot, and must stay that way; web-base learned the same lesson
+  through its random generators.
 - **A docstring in `src` that spells what the scan forbids.** §3's scan reads every
   string literal, docstrings included, and §5's reads them for configuration file names.
   Explaining *why* the library avoids `ON CONFLICT`, an existence clause on `CREATE

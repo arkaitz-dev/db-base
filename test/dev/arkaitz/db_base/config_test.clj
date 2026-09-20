@@ -21,7 +21,7 @@
             [dev.arkaitz.db-base.test-support :as ts])
   (:import [com.zaxxer.hikari HikariDataSource]
            [java.io File]
-           [java.sql SQLException]
+           [java.sql Driver DriverManager DriverPropertyInfo SQLException]
            [java.util.concurrent TimeUnit]))
 
 (def ^:private base
@@ -294,3 +294,54 @@
       (when (is (instance? clojure.lang.ExceptionInfo outcome) (str label " — start did not refuse"))
         (is (= before (ts/pool-number))
             (str "a pool was constructed before the refusal of " label))))))
+
+(deftest a-driver-only-a-clojure-loader-can-see-is-refused-before-any-pool-is-constructed
+  ;; `DriverManager` answers by the CALLER's loader, so a driver added to a running JVM —
+  ;; `add-lib` at a REPL — is found by this library and not by HikariCP, whose own class
+  ;; came from the application loader. Measured 2026-09-20: the pool's refusal for that is
+  ;; a raw `RuntimeException` carrying the JDBC URL, from outside `start`'s try. A `reify`
+  ;; is compiled into a `DynamicClassLoader` exactly like that REPL-added driver, which is
+  ;; what makes the case reproducible here with no REPL and no jar.
+  ;;
+  ;; Not covered, and stated rather than pretended: swapping HikariCP's loader for
+  ;; `ClassLoader/getSystemClassLoader` in the check is invisible, because they are the
+  ;; same loader in this JVM. The positive control — that an ordinary driver is not
+  ;; refused — is every boot in this suite, starting with the one at the top of
+  ;; `a-refusal-happens-before-any-pool-is-constructed`.
+  (let [url     (str "jdbc:testonly:" ts/url-sentinel)
+        reified (reify Driver
+                  (acceptsURL [_ u] (= u url))
+                  ;; nil makes HikariCP refuse cleanly if it ever gets this far, so a
+                  ;; regression shows up as its own failure rather than as an Error.
+                  (connect [_ _ _] nil)
+                  (getMajorVersion [_] 0)
+                  (getMinorVersion [_] 0)
+                  (jdbcCompliant [_] false)
+                  (getParentLogger [_] nil)
+                  (getPropertyInfo [_ _ _] (make-array DriverPropertyInfo 0)))]
+    (DriverManager/registerDriver reified)
+    (try
+      (testing "preconditions: this library's loader finds it and HikariCP's cannot"
+        (is (identical? reified (DriverManager/getDriver url))
+            "a caller compiled by Clojure gets back the very driver registered here")
+        (is (nil? (try (Class/forName (.getName (class reified)) false
+                                      (.getClassLoader HikariDataSource))
+                       (catch ClassNotFoundException _ nil)))
+            "and HikariCP's own loader cannot resolve that class at all, which is the whole case"))
+      (let [before (ts/pool-number)
+            e      (ts/thrown #(db/start {:jdbc-url url :user ts/user-sentinel
+                                          :password ts/password-sentinel
+                                          :pool {:max 1 :timeout-ms 1000} :migrations :none}))
+            after  (ts/pool-number)]
+        (is (= ["db-base: the JDBC driver that accepts :jdbc-url is not one the pool can use"
+                {:config-key [:jdbc-url] :driver (.getName (class reified))}]
+               [(ex-message e) (ex-data e)])
+            "the refusal is this library's, and it names the driver rather than the URL")
+        (is (= before after)
+            (str "and nothing was opened: HikariCP names a pool inside its own constructor,"
+                 " before it ever reaches the driver, so the counter moving means the check"
+                 " ran too late"))
+        (is (= [] (ts/leaks-in :driver-not-visible e)) "SPEC §6: a secret was echoed"))
+      ;; Deregistration is loader-filtered too, so it has to happen from test code, and it
+      ;; has to happen: every later DriverManager lookup in this JVM would ask this driver.
+      (finally (DriverManager/deregisterDriver reified)))))

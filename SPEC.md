@@ -274,7 +274,18 @@ flag is cleared around it (measured). **If closing is what threw the `Error`, th
 `Error` is what leaves**, carrying the failure it interrupted as its suppressed; between
 two `Error`s the first keeps the way out, as a `try`-with-resources would have it. A
 close that throws anything else is suppressed into the failure and changes nothing, which
-is what keeps a boot's refusal an `ex-info`. An interrupt that lands while the pool is lending
+is what keeps a boot's refusal an `ex-info`.
+
+**The driver is checked as the pool will find it, not as this library does.**
+`DriverManager` answers by the calling class's loader, and the loader Clojure compiles
+this library into is not the one HikariCP's class came from. A driver added to a running
+JVM — `add-lib` at a REPL — is therefore visible here and not to the pool, and the pool's
+own refusal for that carries the JDBC URL (measured 2026-09-20). So `start` refuses it
+first, naming the driver class and no URL, before anything opens. The question is asked by
+walking the loaders the pool's own delegates to, because §5 forbids src to load a class by
+name and §3's scan enforces it — which is how this check came to be written twice.
+
+An interrupt that lands while the pool is lending
 the boot its connection is HikariCP's to report: it arrives as that pool's `SQLException`,
 wrapped as the borrow's own failure, with the flag still set. That is web-base's measured vocabulary, and a host that already
 dispatches on `:config-key` should not learn a second one. **No exception type of our
@@ -654,12 +665,23 @@ until the first request meets a missing table.
   library exposes. Not on a timer — §9. This is only about space: an expired session is
   already invisible, because §8 puts the expiry in the read, and that part is settled.
 
-**Measured, but not settled — the residue.** One remains, and it is the kind of trap this
-document writes down before there is code: whether `UUID/randomUUID` is safe under a
-native image, since the JDK holds that `SecureRandom` where a scan of our own var roots
-cannot see it.
+**The residue is measured, and what is left of it is a rule rather than a question.**
 
-The other is now measured and closed. Whether a real network driver honours the `isValid`
+Whether `UUID/randomUUID` is safe under a native image: **it is, where this library uses
+it, and the rule that keeps it so is that a minted value never becomes a var root.**
+Measured 2026-09-20 on GraalVM CE 25.3.4.1. In an image built the ordinary way every UUID
+differs from run to run, including one minted while a class initialises. Build that same
+class with `--initialize-at-build-time` — which is how a Clojure image is built — and the
+value minted during initialisation is **baked into the binary**: identical in every run of
+every instance, with no error and no warning from the builder. Values minted at run time
+stay fresh even there, so the generator is not the hazard; the load-time `def` is. This
+library mints exactly one UUID, the lock holder of §7, inside a function that runs per
+boot. §9's scan cannot help here — it hunts state, not constants — which is why the rule
+is written down instead. The JDK's own generator sits in `java.util.UUID$Holder`, a
+`static final SecureRandom` that `java.base` does not open, so nothing of ours could reach
+it in any case.
+
+The driver question is closed too. Whether a real network driver honours the `isValid`
 timeout against a socket that stays open and answers nothing: **pgjdbc 42.7.13 does**.
 Against PostgreSQL 18.6 through a proxy told to go quiet — both sockets open, every byte
 dropped — `ready?` with a two-second timeout answered false in 2005 ms and then in
