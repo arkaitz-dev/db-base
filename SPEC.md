@@ -628,12 +628,20 @@ until the first request meets a missing table.
   library exposes. Not on a timer — §9. This is only about space: an expired session is
   already invisible, because §8 puts the expiry in the read, and that part is settled.
 
-**Measured, but not settled — the residue.** Both are the kind of trap this document
-writes down before there is code: whether a real network driver honours the `isValid`
-timeout when a socket accepts and never answers — H2 over TCP was measured and does not
-(§6), and pgjdbc's handling was read in its source but not run against such a socket;
-and whether `UUID/randomUUID` is safe under a native image, since the JDK holds that
-`SecureRandom` where a scan of our own var roots cannot see it.
+**Measured, but not settled — the residue.** One remains, and it is the kind of trap this
+document writes down before there is code: whether `UUID/randomUUID` is safe under a
+native image, since the JDK holds that `SecureRandom` where a scan of our own var roots
+cannot see it.
+
+The other is now measured and closed. Whether a real network driver honours the `isValid`
+timeout against a socket that stays open and answers nothing: **pgjdbc 42.7.13 does**.
+Against PostgreSQL 18.6 through a proxy told to go quiet — both sockets open, every byte
+dropped — `ready?` with a two-second timeout answered false in 2005 ms and then in
+1003 ms, a fresh boot failed with this library's own message in 2005 ms for a
+`[:pool :timeout-ms]` of 1000, and a socket that accepts and never speaks at all failed
+the same way in 2008 ms (measured 2026-09-20). H2 over TCP, the same shape, was still
+blocked after twelve seconds (§6), so that trap belongs to that engine and not to the
+JDBC world: it is why the suite's H2 tests stop the server rather than silence it.
 
 ## 12 · The honest argument against this library
 

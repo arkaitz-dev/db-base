@@ -88,6 +88,18 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
         than its column; both take `CREATE TABLE IF NOT EXISTS` and
         `ON DUPLICATE KEY UPDATE`. Neither belongs in the test pair: they are not
         embedded, and they refuse nothing H2 does not refuse already.
+      **PostgreSQL 18.6 was measured the same day and the same way**, because it had been
+      leading on an argument and had never been run:
+      - db-base runs on it unmodified too, with the same four boots and the same refusal.
+        Its duplicate key arrives as SQLState `23505` against MySQL's and MariaDB's
+        `23000`/1062, which is why §7 never classifies by SQLSTATE.
+      - It takes everything the dialect list forbids — `ON CONFLICT` both ways,
+        `RETURNING` both ways, `jsonb`, `LISTEN`, `NOTIFY`, the existence clause — and it
+        takes `MERGE` as well, with its own spelling: the suite's `MERGE` is H2's
+        qualified `SET t.v`, which PostgreSQL refuses as an undefined column, so that cell
+        of the matrix measures a spelling rather than the statement.
+      - **pgjdbc honours `isValid`'s timeout** where H2 over TCP does not — see the trap
+        below. That is an operational argument for it that no dialect table shows.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -183,7 +195,12 @@ is any code to break.**
   server that stops answering, `ready?` and any borrow of a connection idle for more than
   500 ms block until a `NETWORK_TIMEOUT` in the URL expires — still blocked after 12 s
   without one (measured 2026-09-13). A test that needs H2 to fail fast stops the server,
-  which closes its sockets, rather than silencing it.
+  which closes its sockets, rather than silencing it. **This is that engine's, not
+  JDBC's**: pgjdbc 42.7.13 against PostgreSQL 18.6, through a proxy told to go quiet with
+  both sockets open, answered `ready?` false in 2005 ms for a two-second timeout and
+  failed a fresh boot in 2005 ms for a 1000 ms pool timeout (measured 2026-09-20). So a
+  `ready?` that hangs is a fact about the driver in front of you, and the only way to know
+  is to silence it and watch.
 
 ## Where the boundary is expected to erode
 
