@@ -15,9 +15,12 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 ## Project state
 
-**Specification settled 2026-09-09; `start` and `stop` written 2026-09-12, `ready?`
-2026-09-13.** Commands go in this file **only once they have actually been run and
-observed to work**, never from convention. Observed:
+**Specification settled 2026-09-09. `start` and `stop` written 2026-09-12, `ready?`
+2026-09-13, the migration run 2026-09-19, its lock 2026-09-19, and §3's two-engine
+proof 2026-09-20.** What §6 and §7 specify is written and tested; §8's session store and
+§10's Integrant namespace are not, and §12 is the argument for keeping it that way until
+a second consumer asks. Commands go in this file **only once they have actually been run
+and observed to work**, never from convention. Observed:
 
     clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."
     clojure -M:test -n <namespace>         # one namespace
@@ -28,7 +31,10 @@ to the test runner, which reads `-e` as `--exclude` and runs the tests as usual 
 is silently never evaluated (observed 2026-09-12: the tests ran, the form printed nothing).
 To evaluate against the test classpath, run `java -cp "$(clojure -Spath -M:test)"
 clojure.main -e '…'` from the repository root, whose relative `src` and `test` entries the
-classpath needs (observed 2026-09-12), remembering that this skips `:test`'s `:jvm-opts`.
+classpath needs (observed 2026-09-12), remembering that this skips `:test`'s `:jvm-opts` —
+so a probe that talks to H2 passes `-Dh2.delayWrongPasswordMin=0` itself. A file path in
+place of `-e` runs a whole scratch probe the same way (observed 2026-09-20), which is how
+the dialect matrix of §3 was measured before any test pinned it.
 
 **Tools, chosen by the user from measurements run 2026-09-11** (numbers in the session's
 memory, not re-derived here): HikariCP 7.1.0 as the pool, with fail-fast initialisation
@@ -133,6 +139,12 @@ is any code to break.**
   `-Dh2.delayWrongPasswordMin=0`; a JVM started without it (a REPL, `java -cp`) re-arms it,
   and the wrong-password test's witness says so. Never `delayWrongPasswordMax=0`, which
   means no maximum.
+- **A docstring in `src` that spells what the scan forbids.** §3's scan reads every
+  string literal, docstrings included, and §5's reads them for configuration file names.
+  Explaining *why* the library avoids `ON CONFLICT`, an existence clause on `CREATE
+  TABLE` or a `.edn` name therefore reds the suite — measured the day the scan was
+  written, on `lock-table-ready!`'s own docstring. Say it without spelling it, and say
+  in the docstring that this is why; never soften the scan to let the prose through.
 - **A lock row nobody is waiting for.** A boot with nothing pending never asks for the
   lock, which is what keeps an ordinary restart from leaving a row behind — and also what
   makes a row left by a failed release invisible: every restart with nothing to apply
