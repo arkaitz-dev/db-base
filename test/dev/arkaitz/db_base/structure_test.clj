@@ -580,17 +580,47 @@
                           clojure.lang.Volatile AtomicReference AtomicReferenceArray ThreadLocal
                           Reference Future]))
 
-(defn- reaches-state? [value depth]
+(defn- reaches?
+  "Whether anything `pred` answers to sits within `depth` hops of `value`."
+  [pred value depth]
   (let [seen (IdentityHashMap.)]
     (letfn [(walk [x d]
               (cond
                 (nil? x)              false
-                (state? x)            true
+                (pred x)              true
                 (neg? d)              false
                 (.containsKey seen x) false
                 :else (do (.put seen x true)
                           (boolean (some #(walk % (dec d)) (children x))))))]
       (walk value depth))))
+
+(defn- reaches-state? [value depth] (reaches? state? value depth))
+
+(def ^:private uuid-shaped
+  #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+(defn- minted?
+  "The identity-shaped residue of a generator: a UUID, a generator itself, or a string
+  carrying a UUID's spelling anywhere in it — `db-base-<uuid>` counts. What it cannot see,
+  stated rather than implied: a clock reading, an identity hash, a pid, a `gensym`, or
+  anything else whose baked value is indistinguishable from a constant. A memoize cache or
+  a `delay` holding one of those is an atom, and §9's scan already reds on those."
+  [x]
+  (or (instance? java.util.UUID x)
+      (instance? java.util.Random x)
+      (and (string? x) (boolean (re-find uuid-shaped x)))))
+
+(defn- walked-roots
+  "Every interned var with a root in `namespaces` — private ones included, because a
+  private var is baked exactly as hard as a public one."
+  [namespaces]
+  (vec (for [n     namespaces
+             [_ v] (ns-interns (the-ns n))
+             :when (.hasRoot ^clojure.lang.Var v)]
+         v)))
+
+(defn- minted-roots [namespaces]
+  (vec (remove #(not (reaches? minted? (var-get %) 4)) (walked-roots namespaces))))
 
 (defprotocol ^:private ProtocolShaped (probe [x]))
 
@@ -710,3 +740,57 @@
                  " or the existence clause §7 avoids because Derby rejects it. For the forms the"
                  " test pair can refuse, dialect_test proves this list means something; for the"
                  " existence clause, which both engines take, this scan is all there is"))))))
+
+(defn- scan-of
+  "Interns `value` in a namespace of its own and runs the real scan over it, so a control
+  below exercises `ns-interns`, `.hasRoot` and the walk rather than the predicate alone.
+  Returns the names the scan reported, and leaves no namespace behind."
+  [value private?]
+  (let [nom (symbol (str "db-base-test.minted-" (System/nanoTime)))
+        v   (intern (create-ns nom) 'planted value)]
+    (when private? (alter-meta! v assoc :private true))
+    (try (mapv #(name (.-sym ^clojure.lang.Var %)) (minted-roots [nom]))
+         (finally (remove-ns nom)))))
+
+(deftest no-var-root-reaches-a-value-minted-when-the-namespace-loaded
+  ;; SPEC §11, measured 2026-09-20 on GraalVM CE 25.3.4.1 with an AOT-compiled Clojure
+  ;; namespace: in a native image built the ordinary way, whatever a namespace computes
+  ;; while it loads is computed at BUILD time and frozen into the binary — the same value
+  ;; in every run of every instance — while a value minted inside a function stays fresh.
+  ;; The library mints one UUID, §7's lock holder, per boot; this is what keeps it so.
+  ;; The hazard itself cannot be observed from a JVM, so what is observed is the shape of
+  ;; what a var root holds, and `minted?`'s docstring says what that cannot see.
+  (testing "positive controls: the scan itself, over real interned vars"
+    (doseq [[what value] [["a UUID" (random-uuid)]
+                          ["a UUID spelled as a string" (str (random-uuid))]
+                          ["a UUID inside a longer string" (str "db-base-" (random-uuid))]
+                          ["a generator, which is what mints them" (java.security.SecureRandom.)]
+                          ["one hop inside a map" {:holder (str (random-uuid))}]
+                          ;; Two hops: the predicate is asked before the depth is, so a
+                          ;; walk that stopped at the root would still see one hop.
+                          ["two hops down, in a map inside a map" {:pool {:holder (str (random-uuid))}}]
+                          ["one closed over by a function" (let [id (random-uuid)] (fn [] id))]]]
+      (is (= ["planted"] (scan-of value false)) (str "the scan reaches " what)))
+    (is (= ["planted"] (scan-of (random-uuid) true))
+        "a private var is walked too — it is baked exactly as hard as a public one"))
+  (testing "controls: what must not fire"
+    (doseq [[what value] [["a sentinel that is not a UUID" ts/url-sentinel]
+                          ["this library's own table names" {:lock "db_base_migration_lock"
+                                                             :control "ragtime_migrations"}]
+                          ["a pattern that describes a UUID" uuid-shaped]
+                          ["a number, a keyword and a set" #{:dir :lock-wait-ms 2147483647}]]]
+      (is (= [] (scan-of value false)) (str what " is not a minted value"))))
+  (let [namespaces (vec (module-namespaces))
+        walked     (set (walked-roots namespaces))]
+    (testing "preconditions: the walk reached this library's own vars, private ones included"
+      (is (some #{'dev.arkaitz.db-base} namespaces)
+          (str "the scan found the library's namespace: " (pr-str namespaces)))
+      (is (= [true true] [(contains? walked #'dev.arkaitz.db-base/start)
+                          (contains? walked #'dev.arkaitz.db-base/lock-table)])
+          (str "a public var and a private one are both in scope, so a green means the walk"
+               " happened — " (count walked) " roots walked")))
+    (is (= [] (minted-roots namespaces))
+        (str "SPEC §11: a var root reaches a value minted when the namespace loaded. Under a"
+             " native image built with --initialize-at-build-time that value is baked into"
+             " every instance, and §9's scan would not see it because it hunts state rather"
+             " than constants"))))

@@ -676,10 +676,16 @@ value minted during initialisation is **baked into the binary**: identical in ev
 every instance, with no error and no warning from the builder. Values minted at run time
 stay fresh even there, so the generator is not the hazard; the load-time `def` is. This
 library mints exactly one UUID, the lock holder of §7, inside a function that runs per
-boot. §9's scan cannot help here — it hunts state, not constants — which is why the rule
-is written down instead. The JDK's own generator sits in `java.util.UUID$Holder`, a
-`static final SecureRandom` that `java.base` does not open, so nothing of ours could reach
-it in any case.
+boot, **and a scan beside §9's keeps it that way**: no var root of src may reach a UUID, a
+generator, or a string carrying a UUID's spelling. §9's own scan cannot answer this — it
+hunts state, not constants — so the two run side by side over one walk. What neither sees
+is a baked value shaped like any other: a clock reading, an identity hash, a pid, which
+the scan's own docstring says out loud. Asking the image builder to initialise this
+namespace at run time instead is not a fix: it builds, and the binary then dies on
+startup, because Clojure's runtime initialisation goes looking for `clojure/core/server.clj`
+on a classpath a native image does not have (measured the same day). The JDK's own
+generator sits in `java.util.UUID$Holder`, a `static final SecureRandom` that `java.base`
+does not open, so nothing of ours could reach it in any case.
 
 The driver question is closed too. Whether a real network driver honours the `isValid`
 timeout against a socket that stays open and answers nothing: **pgjdbc 42.7.13 does**.

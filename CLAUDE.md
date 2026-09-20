@@ -183,10 +183,15 @@ is any code to break.**
   harmless and is fine on a JVM. Under a native image built the way Clojure images are
   built — `--initialize-at-build-time` — that value is computed while the class
   initialises and **baked into the binary**: the same in every run of every instance, with
-  no error and no warning (measured 2026-09-20 on GraalVM CE 25.3.4.1). §9's scan does not
-  catch it, because it hunts state and this is a constant. The lock holder of §7 is minted
-  inside a function, per boot, and must stay that way; web-base learned the same lesson
-  through its random generators.
+  no error and no warning (measured 2026-09-20 on GraalVM CE 25.3.4.1, on a real
+  AOT-compiled Clojure namespace). §9's own scan does not catch it — it hunts state and
+  this is a constant — so `structure_test` grew one beside it: no var root of src may reach
+  a UUID, a generator, or a string carrying a UUID's spelling. The lock holder of §7 is
+  minted inside a function, per boot, and that scan is what keeps it there; web-base
+  learned the same lesson through its random generators. What no scan sees is a baked value
+  shaped like any other — a clock reading, a pid — and asking the image builder to
+  initialise this namespace at run time is not a fix: it builds, and the binary then dies
+  on startup.
 - **A docstring in `src` that spells what the scan forbids.** §3's scan reads every
   string literal, docstrings included, and §5's reads them for configuration file names.
   Explaining *why* the library avoids `ON CONFLICT`, an existence clause on `CREATE
