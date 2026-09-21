@@ -69,6 +69,43 @@ Every failure is an `ex-info` whose data carries `:config-key` as a vector path,
 `:migration-id` when one migration is to blame. The JDBC URL and the password are never
 echoed, in the message or in the data.
 
+## The session store
+
+`dev.arkaitz.db-base.session` implements Ring's `SessionStore` over a table of this
+library's own, so a session can be **ended from the server** — which a signed cookie
+cannot do, because the sealed value a browser holds stays valid however many empty ones
+you send it afterwards.
+
+```clojure
+(require '[dev.arkaitz.db-base.session :as session])
+
+;; ask for the table in the configuration `start` takes
+:sessions {:lock-wait-ms 5000}
+
+(def store (session/store handle {:lifetime-ms 3600000 :readers {}}))
+(session/reclaim-expired! handle)   ; the operator's sweep, and the only one there is
+```
+
+**It is the only namespace here that needs a dependency this library does not declare.**
+`ring-core` is not in `:deps`: a host that wants the store brings it — every host of
+web-base or auth-base already has — and a host that only wanted a pool loads neither it
+nor the 1.09 MB it drags. Requiring this namespace without ring on the classpath fails as
+a missing class rather than as a message of ours, and that is the price of the
+arrangement.
+
+Its migration runs **before** the host's, under a lock row and a control table of its own,
+so a host's own `reset` cannot take this library's history with it.
+
+**What it never does is upsert.** A `write-session` under a key whose row is gone changes
+nothing and says so: the row went because someone logged out, revoked it, or it expired,
+and putting it back undoes a revocation. Ring's own `MemoryStore` upserts, and the one
+JDBC store the ecosystem has copied that — `SPEC.md` §8 has the whole argument, and it is
+the reason this library is more than wiring.
+
+**Before you wire it, know what it costs.** A session in a row means every request touches
+the database: a visitor who never signs in still leaves a row, because the CSRF token
+lives in the session, and nothing removes those but `reclaim-expired!`.
+
 ## What it will not do
 
 - **Read a file nobody named.** Configuration arrives as a map. The connection details,
@@ -132,9 +169,10 @@ when a migration fails at boot, whether a password may ever be defaulted — and
 re-litigated in every project otherwise.
 
 As of this writing it has **one** consumer, the `demo/` above, and the exit condition
-needs two. That host needed no library code that did not already exist — which is a
-library that fits, and equally a library that is still nothing but wiring. Read §12
-before adding anything.
+needs two. §8's store is written and that demo uses it — but §12 records, measured and
+in full, that the host's own features would work under a cookie, so nobody has yet
+*needed* the part of this library that is not wiring. Read §12 before adding anything;
+that paragraph is the point of the whole thing.
 
 ## Licence
 

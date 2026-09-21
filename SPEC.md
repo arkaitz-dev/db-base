@@ -791,11 +791,43 @@ not a licence to add code in passing.
   the shape the exit condition is watching for. One consumer cannot settle it. The
   second one is what decides, and the honest reading today is that this one did not
   move the argument in this library's favour.
-- **§8 is untouched.** The demo's session is a key in a cookie, not a store, so the
-  part of this document that is *not* wiring — the store's contract, where a zero-row
-  update is correct and an upsert resurrects a revoked session — has still never been
-  exercised by anyone. Plugging §8 into web-base's `:session {:store …}` port is the
-  next step, and it is a one-line change in the host by construction.
+- **§8 is written, and the gate it entered under does not hold.** The store exists, the
+  demo's session is a row, and an acceptance test proves what a cookie cannot do — a
+  copied cookie replayed after a logout comes back anonymous, and the SAME host over the
+  cookie store still serves it. That is the store meeting its contract. It is **not** the
+  host having asked, and §12's gate is the second thing.
+
+  Three measurements say so, and they were taken by a panel auditing the acceptance test
+  on 2026-09-21 rather than by reading it:
+  - **The demo's own features work under a cookie.** Naming yourself and ending your
+    session are the same experience for an honest client either way. What needs a row is
+    a THIEF replaying a copy, and no feature of this host exposes that: there is no view
+    of "my other sessions", no way to end one by id. The suite models the thief; the
+    product does not.
+  - **The order was backwards.** The store was committed first and the demo rewritten
+    afterwards. The consumer was fitted to the library, which is the shape §12's gate
+    exists to prevent.
+  - **The feature that would ask** — list my sessions, end another one — cannot be built
+    without the host reading `db_base_sessions` itself, and this section says that table
+    is this library's and not the host's. Either db-base grows a listing surface, which
+    §9 is a list of reasons not to, or the host reaches into it. That is a decision, and
+    it is not taken here.
+
+  So the honest entry is: **§8 is code nobody has needed yet**, written under a gate that
+  was satisfied in form and not in substance, and recorded that way (with the user,
+  2026-09-21) rather than dressed up. The second consumer is what decides, and until then
+  this paragraph is the one to read.
+- **What plugging §8 in cost this host, measured.** Once the session is a row, every
+  request touches the database, and three consequences followed that nobody predicted
+  from reading: an anonymous visit leaves a row behind, because web-base keeps its CSRF
+  token in the session — a health probe included, three probes and three rows, and
+  nothing sweeps them but the operator's own call; a closed pool makes a request die at
+  the adapter rather than reach web-base's error page, because that error handler sits
+  INSIDE the session middleware; and `ready?` became unobservable through the stack, so
+  the demo's `/health` can no longer deliver the 503 it computes. All three are
+  web-base's layering rather than this library's, and all three are worth more than the
+  feature that revealed them.
+
 - **One hazard the exercise surfaced, which belongs to the host and not here.**
   Integrant's own `ex-info`, thrown when a key's `init-key` fails, carries `:value` —
   the resolved configuration for that key, JDBC URL and password included. This

@@ -20,8 +20,25 @@
 (defn- note-item [{:keys [id body written_at]}]
   [:li [:span.body body] " " [:small (str "#" id " · " written_at)]])
 
+(defn- visitor-bar
+  "Who is writing, and the way to stop being them. The name is decoration; the session's
+  lifecycle is the point, and this is where it becomes visible."
+  [request]
+  (if-let [visitor (get-in request [:session :visitor])]
+    [:p.visitor "writing as " [:strong visitor] " · "
+     [:form {:method "post" :action "/session/end" :style "display:inline"}
+      (security/csrf-field request)
+      [:button {:type "submit"} "end this session"]]]
+    [:form {:method "post" :action "/session"}
+     (security/csrf-field request)
+     [:label {:for "visitor"} "Your name"]
+     [:input {:id "visitor" :name "visitor" :maxlength "40" :required true
+              :placeholder "who is writing"}]
+     [:button {:type "submit"} "Start a session"]]))
+
 (defn notes-page [notes migrations-applied request]
   (list
+   (visitor-bar request)
    [:form {:method "post" :action "/notes"}
     (security/csrf-field request)
     [:label {:for "body"} "A note"]

@@ -115,10 +115,21 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       library code that did not already exist, and the only thing added was §10's
       Integrant key, which §10 already specified. That fits and also fails to move §12's
       argument — written up there, because that paragraph is the falsification test.
-- [ ] **§8's session store, plugged into web-base's `:session {:store …}` port.** The
-      demo's session is a key in a cookie today, so §8 — the one part of the
-      specification that is not wiring — has still never been exercised. The host change
-      is one line by construction; the store is not written.
+- [x] **§8's session store, written 2026-09-21** — `dev.arkaitz.db-base.session`, its own
+      migration run before the host's, `ring-core` undeclared so a host that only wanted a
+      pool loads neither it nor ring. The demo's session is a row, and an acceptance test
+      proves what a cookie cannot do, with a control that boots the SAME host over the
+      cookie store and watches the copy still work there.
+- [ ] **§12's gate was satisfied in form and not in substance, and that is recorded
+      rather than fixed** (decided with the user 2026-09-21, written into §12). The demo's
+      own features — naming yourself, ending your session — work under a cookie for an
+      honest client; what needs a row is a thief replaying a copy, which no feature of the
+      host exposes. The store was committed first and the consumer fitted to it
+      afterwards. The feature that WOULD ask — list my sessions, end another by id —
+      cannot be built without the host reading `db_base_sessions`, which §8 says is this
+      library's and not the host's: either db-base grows a listing surface, which §9 is a
+      list of reasons against, or the host reaches in. Open on purpose, for the second
+      consumer to decide.
 
 - [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
       the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
@@ -130,6 +141,20 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       cross-instance defect that only shows under a failure path, which is where it would
       hurt most. Deferred because building it needs a boot that fails *while holding*, and
       that is §7's suite rather than §8's.
+
+Two belong to **web-base**, found by building the demo against it and measured
+2026-09-21. Neither is db-base's to fix and both are worth raising there:
+
+- [ ] **Its error handler sits inside its session middleware.** `web_base.clj` wraps
+      `ring-handler` with `error/default-handler` innermost and applies `session/wrap`
+      later, so with a server-side store a database that is down makes a request die at
+      the adapter instead of reaching the error page. The measured consequence here: the
+      demo's `/health` computes a 503 that never leaves, and `ready?` became unobservable
+      through the stack — a route that never calls it survives the whole suite.
+- [ ] **Every request without a cookie writes a session row**, because ring-anti-forgery
+      keeps its token in the session. Three health probes, three rows; a balancer polling
+      every five seconds writes seventeen thousand a day, and §8's rows are reclaimed only
+      by a function the operator calls. A route that wants no session has no way to say so.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -248,6 +273,13 @@ is any code to break.**
   than anything in `src`. The same sentence has a second half: the caller must halt
   `(:system (ex-data e))` itself, or a boot that failed halfway leaks whatever came
   before the key that threw.
+- **A session in a row puts the database in front of every request.** Once §8's store is
+  wired, a request no longer merely *may* touch the database — it does, twice, because
+  the CSRF token lives in the session. Everything downstream inherits that: a closed pool
+  stops being a degraded mode and becomes a failed request, an anonymous visitor costs a
+  row, and a health check can no longer report what it computes. None of it is visible
+  from reading either library; all of it appeared the moment the two were put together
+  (measured 2026-09-21, pinned in the demo's seam test).
 - **HikariCP keeps the login timeout on `DriverManager`, which the whole JVM shares.** A
   pool's close waits for the login timeout of the last pool constructed, so timing tests
   keep their timeouts within the same whole second.

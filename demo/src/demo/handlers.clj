@@ -1,13 +1,33 @@
 (ns demo.handlers
   "Request in, response out. Every handler takes the database handle db-base returned,
   which is what a host does with it: hold it, and hand it to whatever needs a connection."
-  (:require [demo.notes :as notes]
+  (:require [clojure.string :as str]
+            [demo.notes :as notes]
             [demo.views :as views]
             [dev.arkaitz.db-base :as db]
-            [dev.arkaitz.web-base.response :as response]))
+            [dev.arkaitz.web-base.response :as response]
+            [dev.arkaitz.web-base.session :as session]))
 
 (defn home [db request]
   (response/ok (views/notes-page (notes/list-notes db) (:migrations-applied db 0) request)))
+
+(defn sign-in
+  "Puts a name in the session, through web-base's `rotate`: a fresh session id for the
+  one that is about to hold something, which is the defence against fixation. Under a
+  server-side store that also asks db-base to delete the old row — with a nil key when
+  the visitor was anonymous, which is the ordinary case here."
+  [_db request]
+  (let [visitor (str/trim (str (get-in request [:params "visitor"])))]
+    (if (str/blank? visitor)
+      (response/see-other "/")
+      (session/rotate (response/see-other "/") {:visitor visitor}))))
+
+(defn end-session
+  "Ends THIS session and no other. Under a cookie this cannot be done at all: the sealed
+  value the browser holds stays valid forever, and all `delete-session` can do is hand
+  back a fresh empty one. Under db-base's store it is a row, and the row goes."
+  [_db _request]
+  (assoc (response/see-other "/") :session nil))
 
 (defn create [db request]
   (notes/add-note! db (get-in request [:params "body"]))
