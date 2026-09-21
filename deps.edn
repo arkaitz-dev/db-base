@@ -29,10 +29,23 @@
  ;; test/resources-second is a second classpath root holding the same prefix as the
  ;; first, which is how two jars carrying one migration name reach a host.
  {:test {:extra-paths ["test" "test/resources" "test/resources-second"]
+         ;; ring-core is here and NOT in :deps, decided with the user 2026-09-21 (SPEC §8).
+         ;; The session store implements Ring's port, so the suite needs ring to exercise
+         ;; it; a consumer does not, because the namespace that requires ring is optional
+         ;; and a host that wants the store brings ring itself — every host of web-base or
+         ;; auth-base already has it. Measured: ring-core's closure is 1.09 MB, of which
+         ;; 992 KB is commons-io, commons-codec and commons-fileupload2-core, file-upload
+         ;; machinery a session store never touches; §10's whole Integrant closure is
+         ;; 23,504 bytes. Rule 1 of this project is that a consumer receives a pool and a
+         ;; migration runner and nothing else.
+         ;; The dependency scan resolves with no alias, so it never sees this; what keeps
+         ;; the arrangement honest is the subprocess guard in structure_test, because a
+         ;; stray require compiles, loads and passes every other test.
          :extra-deps  {io.github.cognitect-labs/test-runner
                        {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                        com.h2database/h2      {:mvn/version "2.5.250"}
-                       org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}}
+                       org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}
+                       ring/ring-core         {:mvn/version "1.15.5"}}
          ;; H2's brute-force delay is JVM-global: every refused login doubles it and
          ;; the next correct login anywhere sleeps a random part of it
          ;; (org.h2.engine.Engine.validateUserAndPassword), so one test that logs in

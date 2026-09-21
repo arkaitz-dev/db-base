@@ -76,6 +76,7 @@
   measurement is all there is."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dev.arkaitz.db-base :as db]
@@ -506,12 +507,15 @@
                      (catch java.io.IOException e e))]
     (if (instance? Throwable process)
       {:error (str "the clojure CLI could not be run: " (ex-message process))}
-      (let [^Process process process]
+      (let [^Process process process
+            ;; Drained while it runs, for the reason written beside `loading-report`: a
+            ;; classpath is the one output here with no bound on its length.
+            drained (future (slurp (.getInputStream process)))]
         (if-not (.waitFor process 60 TimeUnit/SECONDS)
           (do (.destroyForcibly process)
               {:error "clojure -Srepro -Spath did not finish within 60 s"})
-          (let [output (slurp (.getInputStream process))]
-            (if (zero? (.exitValue process))
+          (let [output (deref drained 10000 ::stalled)]
+            (if (and (not= ::stalled output) (zero? (.exitValue process)))
               {:entries (str/split (str/trim output) #":")}
               {:error (str "clojure -Srepro -Spath exited " (.exitValue process)
                            " (its stderr is in the test output above): " output)})))))))
@@ -565,16 +569,160 @@
            (.getName (class (org.slf4j.LoggerFactory/getILoggerFactory))))
         "corroboration: SLF4J itself found no provider")))
 
-(defn- module-namespaces
-  "Every namespace of the library, from the sources on disk and then loaded. Read from
-  disk because a filtered run loads only what it needs, and a walk over `all-ns` would
-  miss the rest; loaded because `the-ns` answers only for what is already there, and an
-  optional namespace — §10's Integrant one — is exactly what nothing else requires."
+(defn- namespace-of-path
+  "The namespace a source file under `src/` declares, from its path alone."
+  [path]
+  (symbol (-> path (str/replace #"\.clj[cs]?$" "") (str/replace "/" ".")
+              (str/replace "_" "-"))))
+
+(defn- source-namespaces
+  "Every namespace of the library, named from the sources on disk and not loaded. Read
+  from disk because a filtered run loads only what it needs, and a walk over `all-ns`
+  would miss the rest — an optional namespace is exactly what nothing else requires.
+  Callers that depend on the list being complete check that by hand as well: a walk that
+  silently shrank to one file would otherwise be invisible."
   []
-  (for [[path _] (source-files (src-root))
-        :let [nom (symbol (-> path (str/replace #"\.clj[cs]?$" "") (str/replace "/" ".")
-                              (str/replace "_" "-")))]]
-    (do (require nom) nom)))
+  (sort (map (comp namespace-of-path key) (source-files (src-root)))))
+
+(defn- module-namespaces
+  "`source-namespaces`, loaded: `the-ns` answers only for what is already there."
+  []
+  (map #(do (require %) %) (source-namespaces)))
+
+(def ^:private may-need-ring
+  "Namespaces of `src` allowed to need ring-core. Empty on purpose until §8's store
+  exists: today nothing in this library may need ring, and the day one namespace does the
+  exemption arrives in the same commit as the namespace that earns it.
+
+  **Every member is checked, not merely excused.** The subprocess below requires each one
+  too and reports whether it failed naming ring; the test asserts that every exempt
+  namespace did. So an exemption written for a namespace that does not need ring reds,
+  and the hole cannot be widened by adding a name here. §10's Integrant scan sets the
+  precedent: it asserts that its one exempt file DOES reference integrant, because a scan
+  that found nothing there would be finding nothing anywhere."
+  #{})
+
+(defn- loading-report
+  "One JVM on the classpath a CONSUMER resolves — `-Srepro`, so no alias and no user
+  configuration — asked to require each of `namespaces` and then ring's own, answering
+  the map it printed. `{:error …}` instead when the subprocess could not be run, did not
+  finish, exited non-zero, or printed something that is not that map: each of those is a
+  red of its own rather than one that could be read as `needs ring`.
+
+  A subprocess and not a reading, because this hazard is invisible to every scan above. A
+  stray `(:require [dev.arkaitz.db-base.session …])` in this library's core compiles,
+  loads and passes the whole suite — the test classpath has ring-core, by decision — and
+  what it breaks is a consumer's boot, which only a consumer's classpath can show.
+
+  Bounded at 60 s, which is a hang guard and never a criterion: this JVM starts and
+  compiles the library, measured 1.4 s against the 18–483 ms of `-Spath` next door. An
+  expiry is its own message."
+  [^File project-root namespaces exempt]
+  (let [form    (pr-str
+                 (list 'let ['r '(fn [n] (try (require n) nil (catch Throwable e [n (ex-message e)])))
+                             'nss (list 'quote (vec namespaces))
+                             'exempt (list 'quote (vec exempt))]
+                       '(let [failed (into {} (keep r nss))]
+                          (prn {;; Read from that JVM's own `all-ns`, never echoed back
+                                ;; from the argument: a list handed in and printed out
+                                ;; again agrees with itself whatever happened to it.
+                                :loaded (vec (sort (filter (set nss) (map ns-name (all-ns)))))
+                                :failed failed
+                                :start-resolves (some? (resolve 'dev.arkaitz.db-base/start))
+                                ;; Each exemption must be earned: a namespace excused from
+                                ;; loading has to be one that really cannot, and for the
+                                ;; stated reason.
+                                :exempt-need-ring
+                                (into {} (for [n exempt
+                                               :let [e (try (require n) nil
+                                                            (catch Throwable t (str (ex-message t))))]]
+                                           [n (boolean (and e (re-find #"ring" e)))]))
+                                ;; Asked for by name rather than by looking for a jar on a
+                                ;; path: what decides is whether a consumer's JVM resolves
+                                ;; it, not whether something ring-shaped sits on disk.
+                                :ring (try (require 'ring.middleware.session.store) :present
+                                           (catch java.io.FileNotFoundException _ :absent)
+                                           (catch Throwable e {:error (ex-message e)}))}))))
+        process (try (.start (doto (ProcessBuilder. ^java.util.List ["clojure" "-Srepro" "-M" "-e" form])
+                               (.directory project-root)
+                               (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT)))
+                     (catch java.io.IOException e e))]
+    (if (instance? Throwable process)
+      {:error (str "the clojure CLI could not be run: " (ex-message process))}
+      (let [^Process process process
+            ;; Drained while the process runs, never after waiting for it: a pipe holds
+            ;; 64 KB on this platform, and a child that fills it blocks in `write` while
+            ;; the parent blocks in `waitFor`. The output is ~200 bytes today, and the
+            ;; path where it grows is `:failed`, which carries compiler messages — the
+            ;; one failure this helper exists to report.
+            drained (future (slurp (.getInputStream process)))]
+        (if-not (.waitFor process 60 TimeUnit/SECONDS)
+          (do (.destroyForcibly process)
+              {:error "the subprocess did not finish within 60 s"})
+          (let [output (deref drained 10000 ::stalled)]
+            (cond
+              (= ::stalled output)
+              {:error "the subprocess ended but its output could not be read within 10 s"}
+
+              (not (zero? (.exitValue process)))
+              {:error (str "the subprocess exited " (.exitValue process)
+                           " (its stderr is in the test output above): " output)}
+
+              :else
+              (let [parsed (try (edn/read-string output) (catch Exception e e))]
+                (if (map? parsed)
+                  parsed
+                  {:error (str "the subprocess printed something other than one map: "
+                               (pr-str output))})))))))))
+
+(deftest only-the-session-store-may-need-ring-and-everything-else-loads-without-it
+  ;; SPEC §8, decided with the user 2026-09-21: ring-core is the host's. It sits on the
+  ;; `:test` alias and not in `:deps`, and that arrangement has two halves — a consumer
+  ;; must load this library without ring, and the suite must HAVE ring so §8's store can
+  ;; be exercised at all. Both are witnessed here, because either can evaporate without
+  ;; the other noticing.
+  ;;
+  ;; Measured 2026-09-21, which is why this costs a JVM: with `"ring"` in `library-roots`
+  ;; — where §8's store will put it — a require of a sibling that needs ring is caught by
+  ;; NO other test in this file. `library-roots` permits `dev.arkaitz.db-base` by
+  ;; construction; the dependency scan resolves with no alias and never sees `:test`; and
+  ;; §9's namespace walk requires everything in a JVM that has ring.
+  (let [project-root (.getParentFile ^File (src-root))
+        derived      (source-namespaces)
+        expected     (vec (remove may-need-ring derived))
+        report       (loading-report project-root expected may-need-ring)]
+    (is (= #{} (set/difference '#{dev.arkaitz.db-base
+                                  dev.arkaitz.db-base.integrant
+                                  dev.arkaitz.db-base.session.schema}
+                               (set derived)))
+        (str "precondition: the namespaces come from the sources on disk, and every one"
+             " this test knows of is among them. Containment and not equality, so a file"
+             " added to src is covered without editing this line while a walk that shrank"
+             " to one file still reds — the first is an honest edit and only the second"
+             " is a defect"))
+    (is (= {:loaded expected
+            :failed {}
+            :start-resolves true
+            :exempt-need-ring (into {} (map (fn [n] [n true])) may-need-ring)
+            :ring :absent}
+           report)
+        (str "SPEC §3 rule 1 and §8: on the classpath a consumer resolves, every namespace"
+             " of this library that is not exempt loads, and the namespace §8's store"
+             " implements cannot be resolved there. `:failed` names the namespace and the"
+             " compiler's own message, which carries the file that pulled the missing one;"
+             " `:loaded` is read from that JVM's `all-ns` rather than echoed back from the"
+             " argument, so it reports an outcome and not an intent; `:start-resolves`"
+             " says the requires really loaded rather than being swallowed by an empty"
+             " walk; `:exempt-need-ring` says every exemption was earned; and `:ring"
+             " :absent` is the control — without it a green would mean ring happened to"
+             " be on the path, not that this library can do without it"))
+    (testing "the other half of the decision: the suite itself has ring"
+      (is (= :present (try (require 'ring.middleware.session.store) :present
+                           (catch java.io.FileNotFoundException _ :absent)))
+          (str "ring-core is on the `:test` alias, which is what makes §8's store"
+               " exercisable at all. Nothing else in the suite loads a ring namespace"
+               " today, so deleting that line from deps.edn would leave every test green"
+               " while half of this decision quietly disappeared")))))
 
 (defn- children
   "What `x` holds, one hop out. Containers are opened through their public API —

@@ -608,9 +608,14 @@ rule 1 of this project applied to its own specification: *impose what you are, n
 you use*. The price is honest and is written in the README: requiring the namespace
 without `ring-core` on the classpath fails as a missing class rather than as a message of
 ours. The suite carries `ring-core` on `:test` alone, which the dependency scan cannot
-see — it resolves with no alias — and a subprocess guard checks that the core namespace
-still loads where ring is absent, because a stray `require` compiles, loads and passes
-every other test.
+see — it resolves with no alias — and a subprocess guard boots one JVM on the classpath a
+consumer resolves and checks that **every** namespace of `src` loads there, that ring
+genuinely cannot be resolved on it, and that each namespace excused from that rule really
+does fail for want of ring. It costs a JVM because nothing cheaper can see the hazard:
+once this section's namespace is written, `src` may name `ring`, and from that moment a
+require of a sibling that needs it compiles, loads and passes every other test — measured
+2026-09-21, with the scan that would otherwise catch it deliberately widened to §8's own
+shape.
 
 **auth-base's store is a different case and does not ship here.** Its protocol is ours,
 and the adapter is a page of code the host writes over a datasource this library
