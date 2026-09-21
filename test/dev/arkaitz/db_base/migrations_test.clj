@@ -686,6 +686,9 @@
 
 (deftest the-history-is-read-as-a-set-whatever-order-it-arrives-in
   (let [plan     @(ns-resolve 'dev.arkaitz.db-base 'plan-migrations)
+        ;; The run is built by the code under test rather than spelled here, so this stays
+        ;; a test of how a history is read and not of the shape of a map (SPEC §7, §8).
+        run      #(@(ns-resolve 'dev.arkaitz.db-base 'host-run) % 0)
         between  (vec (ragtime-jdbc/load-resources "db-base-test/between"))
         plus-one (vec (ragtime-jdbc/load-resources "db-base-test/plus-one"))]
     (is (= [["001-a" "002-b" "002a-x" "003-c" "004-d"] ["001-a" "002-b" "003-c" "004-d"]]
@@ -698,9 +701,9 @@
                    ["003-c" "002-b" "001-a"] ["001-a" "003-c" "002-b"] ["002-b" "001-a" "003-c"]]]
       (is (= (refused "between" "migration 002a-x is new but sorts before 003-c, which is already applied"
                       "002a-x")
-             (pair (ts/thrown #(plan "db-base-test/between" order between))))
+             (pair (ts/thrown #(plan (run "db-base-test/between") order between))))
           (str "refused whatever order the history arrives in: " (pr-str order)))
-      (is (= ["004-d"] (plan "db-base-test/plus-one" order plus-one))
+      (is (= ["004-d"] (plan (run "db-base-test/plus-one") order plus-one))
           (str "and what sorts after every applied one is pending in that same order: " (pr-str order))))))
 
 (deftest a-lock-row-a-failed-release-left-behind-waits-for-a-boot-that-has-something-to-apply

@@ -63,6 +63,20 @@
   different shape would be a different name."
   "db_base_migration_lock")
 
+(defn- host-run
+  "How the host's migration run names itself. Every refusal below reads the control
+  table, the source and the configuration key to blame from a map like this one rather
+  than from a literal, because this library has a second run of its own to make and the
+  two agree on nothing but the lock table they share (SPEC §7, §8). `:extra` is whatever
+  else that run's lock refusal carries in its data."
+  [dir wait-ms]
+  {:table      host-migrations-table
+   :source     dir
+   :blame      [:migrations :dir]
+   :wait-blame [:migrations :lock-wait-ms]
+   :wait-ms    wait-ms
+   :extra      {:dir dir}})
+
 (def ^:private lock-poll-ms
   "How finely the wait for the lock is sliced. Nothing depends on it: what a boot waits
   is `[:migrations :lock-wait-ms]`."
@@ -200,9 +214,9 @@
              (do (.addSuppressed t failure) (throw t))
              (.addSuppressed failure t))))))
 
-(defn- migration-failure [dir message id cause]
+(defn- migration-failure [run message id cause]
   (ex-info (str "db-base: " message)
-           (cond-> {:config-key [:migrations :dir] :value dir}
+           (cond-> {:config-key (:blame run) :value (:source run)}
              id (assoc :migration-id id))
            cause))
 
@@ -213,8 +227,9 @@
   either way it is a migration that never runs."
   #"^[^/]+\.edn$|^[^/]+\.(?:up|down)(?:\.\d+)?\.sql$")
 
-(defn- refuse-files-ragtime-would-ignore! [dir]
-  (let [ignored (for [url   (resauce/resource-dir dir)
+(defn- refuse-files-ragtime-would-ignore! [run]
+  (let [dir     (:source run)
+        ignored (for [url   (resauce/resource-dir dir)
                       :let  [address (str url)]
                       ;; A subdirectory ends in a slash. Only direct children count, which
                       ;; §7 records, so a directory beside them is not a mistake.
@@ -223,38 +238,41 @@
                       :when (not (re-find migration-file-name file-name))]
                   file-name)]
     (when-let [file-name (first (sort ignored))]
-      (throw (migration-failure dir (str file-name " under " dir " is not a migration ragtime would"
+      (throw (migration-failure run (str file-name " under " dir " is not a migration ragtime would"
                                          " load: name SQL files NNN-name.up.sql and EDN files"
                                          " NNN-name.edn, or keep it out of the prefix")
                                 nil nil)))))
 
 (defn- load-source
-  "The migrations under the classpath prefix `dir`, refused before any pool exists when a
-  file there is not one, when they cannot be read, when there are none, when two load
-  under one id, when one has no id, and when one has nothing to run (SPEC §7)."
-  [dir]
-  (let [migrations (try (refuse-files-ragtime-would-ignore! dir)
+  "The migrations under the classpath prefix the host named, refused before any pool
+  exists when a file there is not one, when they cannot be read, when there are none,
+  when two load under one id, when one has no id, and when one has nothing to run
+  (SPEC §7). Only the host's run has a prefix: this library carries its own migrations as
+  data, so nothing here is on that path (SPEC §8)."
+  [run]
+  (let [dir        (:source run)
+        migrations (try (refuse-files-ragtime-would-ignore! run)
                         (vec (ragtime-jdbc/load-resources dir))
                         ;; The refusal above is already this library's; everything else
                         ;; listing or reading the prefix throws is the reader's.
                         (catch ExceptionInfo e (throw e))
                         (catch Exception e
-                          (throw (migration-failure dir (str "the migrations under " dir " could not be loaded")
+                          (throw (migration-failure run (str "the migrations under " dir " could not be loaded")
                                                     nil e))))]
     (when (empty? migrations)
       ;; Zero found is the schema one deploy behind: a misspelt prefix, or a jar built
       ;; without directory entries, which answers nothing for any prefix.
-      (throw (migration-failure dir (str "no migrations found under the classpath prefix " dir) nil nil)))
+      (throw (migration-failure run (str "no migrations found under the classpath prefix " dir) nil nil)))
     (when (some #(str/blank? (ragtime-protocols/id %)) migrations)
       ;; Several migrations in one EDN file, none of them named: ragtime records the
       ;; first under the empty id and the second collides with it.
-      (throw (migration-failure dir (str "a migration under " dir " has no id: name SQL files"
+      (throw (migration-failure run (str "a migration under " dir " has no id: name SQL files"
                                          " NNN-name.up.sql, and give every migration in an EDN"
                                          " vector its own id")
                                 nil nil)))
     (when-let [id (first (sort (keep (fn [[id n]] (when (< 1 n) id))
                                      (frequencies (map ragtime-protocols/id migrations)))))]
-      (throw (migration-failure dir (str "two migrations under " dir " load under the id " id) id nil)))
+      (throw (migration-failure run (str "two migrations under " dir " load under the id " id) id nil)))
     ;; ragtime records such a migration as applied without running anything: an EDN
     ;; function that does not resolve loads as nil, and a lone down file as no statements.
     (when-let [id (first (sort (keep (fn [m] (let [up (:up m)]
@@ -263,7 +281,7 @@
                                                               (every? #(and (string? %) (str/blank? %)) up)))
                                                  (ragtime-protocols/id m))))
                                      migrations)))]
-      (throw (migration-failure dir (str "migration " id " under " dir " has nothing to run up: its up"
+      (throw (migration-failure run (str "migration " id " under " dir " has nothing to run up: its up"
                                          " is missing, blank, or names a function that does not"
                                          " exist")
                                 id nil)))
@@ -297,9 +315,9 @@
   "What the control table records, read with a `SELECT` of this library's own — never
   through ragtime, whose read creates the table, and creating it belongs under the lock
   (SPEC §7). `nil` when the table is not there, which is not the same as none recorded."
-  [^DataSource ds]
+  [^DataSource ds run]
   (try (with-open [c  (.getConnection ds)
-                   st (prepared c (str "SELECT id FROM " host-migrations-table) [])
+                   st (prepared c (str "SELECT id FROM " (:table run)) [])
                    ^ResultSet rows (.executeQuery st)]
          (loop [acc #{}] (if (.next rows) (recur (conj acc (.getString rows 1))) acc)))
        (catch SQLException _ nil)))
@@ -315,23 +333,24 @@
                           " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
          (catch SQLException e (when-not (readable? ds lock-table) (throw e))))))
 
-(defn- lock-held-elsewhere [dir wait-ms holder acquired-at]
-  (ex-info (str "db-base: another instance holds the migration lock" (when holder (str ": " holder))
-                (when acquired-at (str ", taken at " acquired-at " (epoch milliseconds)"))
-                ", and " wait-ms " ms of [:migrations :lock-wait-ms] were not enough. If that"
-                " instance is gone, the repair is: DELETE FROM " lock-table " WHERE id = '"
-                host-migrations-table "'")
-           (cond-> {:config-key [:migrations :lock-wait-ms] :value wait-ms :dir dir}
-             holder (assoc :holder holder)
-             acquired-at (assoc :acquired-at acquired-at))))
+(defn- lock-held-elsewhere [run holder acquired-at]
+  (let [wait-ms (:wait-ms run)]
+    (ex-info (str "db-base: another instance holds the migration lock" (when holder (str ": " holder))
+                  (when acquired-at (str ", taken at " acquired-at " (epoch milliseconds)"))
+                  ", and " wait-ms " ms of " (pr-str (:wait-blame run)) " were not enough. If that"
+                  " instance is gone, the repair is: DELETE FROM " lock-table " WHERE id = '"
+                  (:table run) "'")
+             (cond-> (merge {:config-key (:wait-blame run) :value wait-ms} (:extra run))
+               holder (assoc :holder holder)
+               acquired-at (assoc :acquired-at acquired-at)))))
 
 (defn- take-lock-row!
   "`true`, or the exception the INSERT threw. A primary key violation means someone else
   holds it, and its SQLSTATE is not portable — SQLite leaves it null — so what says which
   it was is the row, read when the wait runs out."
-  [ds holder]
+  [ds run holder]
   (try (update! ds (str "INSERT INTO " lock-table " (id, holder, acquired_at) VALUES (?, ?, ?)")
-                host-migrations-table holder (System/currentTimeMillis))
+                (:table run) holder (System/currentTimeMillis))
        true
        (catch SQLException e e)))
 
@@ -339,37 +358,37 @@
   "Takes the lock, waiting at most `wait-ms`, and returns this boot's holder. A boot that
   cannot take it fails naming the holder, when it took the lock, and the statement that
   repairs one that died (SPEC §7)."
-  [ds dir wait-ms]
+  [ds run]
   (let [holder   (str (random-uuid))
-        deadline (+ (System/nanoTime) (* 1000000 (long wait-ms)))]
+        deadline (+ (System/nanoTime) (* 1000000 (long (:wait-ms run))))]
     (try
       (lock-table-ready! ds)
       (loop []
-        (let [taken (take-lock-row! ds holder)]
+        (let [taken (take-lock-row! ds run holder)]
           (cond
             (true? taken) holder
             (< (System/nanoTime) deadline) (do (Thread/sleep (long lock-poll-ms)) (recur))
             :else
             (let [[other acquired-at] (first-row ds (str "SELECT holder, acquired_at FROM " lock-table
                                                          " WHERE id = ?")
-                                                 host-migrations-table)]
+                                                 (:table run))]
               (cond
                 ;; The holder gave it back as the wait ran out.
-                (and (nil? other) (true? (take-lock-row! ds holder))) holder
+                (and (nil? other) (true? (take-lock-row! ds run holder))) holder
                 ;; No row, and the insert still refuses: it was never another instance.
                 (nil? other) (throw taken)
-                :else (throw (lock-held-elsewhere dir wait-ms other acquired-at)))))))
+                :else (throw (lock-held-elsewhere run other acquired-at)))))))
       (catch SQLException e
-        (throw (migration-failure dir (str "the lock table " lock-table
+        (throw (migration-failure run (str "the lock table " lock-table
                                            " could not be taken, read or created")
                                   nil e))))))
 
-(defn- release-lock! [ds holder]
+(defn- release-lock! [ds run holder]
   (update! ds (str "DELETE FROM " lock-table " WHERE id = ? AND holder = ?")
-           host-migrations-table holder))
+           (:table run) holder))
 
-(defn- release-after-failure! [ds holder ^Throwable failure]
-  (try (release-lock! ds holder)
+(defn- release-after-failure! [ds run holder ^Throwable failure]
+  (try (release-lock! ds run holder)
        (catch Throwable t
          (when-not (identical? t failure) (.addSuppressed failure t)))))
 
@@ -379,18 +398,18 @@
   ids as a set: ragtime reads them ordered by a millisecond timestamp, and ties come
   back in whatever order the engine likes, which ragtime's own check reports as a
   conflict that is not there (measured, SPEC §7)."
-  [dir recorded migrations]
+  [run recorded migrations]
   (let [recorded (set recorded)
         ids      (mapv ragtime-protocols/id migrations)
         position (zipmap ids (range))
         pending  (vec (remove recorded ids))]
     (when-let [id (first (sort (remove position recorded)))]
-      (throw (migration-failure dir (str "migration " id " is recorded in " host-migrations-table
-                                         " but not found under " dir)
+      (throw (migration-failure run (str "migration " id " is recorded in " (:table run)
+                                         " but not found under " (:source run))
                                 id nil)))
     (when-let [last-applied (some->> (seq recorded) (map position) (apply max))]
       (when-let [id (first (filter #(< (position %) last-applied) pending))]
-        (throw (migration-failure dir (str "migration " id " is new but sorts before "
+        (throw (migration-failure run (str "migration " id " is new but sorts before "
                                            (nth ids last-applied) ", which is already applied")
                                   id nil))))
     pending))
@@ -400,12 +419,12 @@
   migration it happened in; everything before it stays applied and recorded, and it
   does not (SPEC §7). A migration that ran but could not then be recorded is reported
   the same way, and the next boot runs it again."
-  [ds dir migrations]
-  (let [store   (ragtime-jdbc/sql-database ds {:migrations-table host-migrations-table})
-        unread  #(migration-failure dir (str "the control table " host-migrations-table
+  [ds run migrations]
+  (let [store   (ragtime-jdbc/sql-database ds {:migrations-table (:table run)})
+        unread  #(migration-failure run (str "the control table " (:table run)
                                              " could not be read or created")
                                     nil %)
-        pending (plan-migrations dir
+        pending (plan-migrations run
                                  (try (vec (ragtime-protocols/applied-migration-ids store))
                                       (catch Exception e (throw (unread e))))
                                  migrations)
@@ -419,7 +438,7 @@
       (catch InterruptedException e (throw e))
       (catch Exception e
         (throw (if-let [id @current]
-                 (migration-failure dir (str "migration " id " failed") id e)
+                 (migration-failure run (str "migration " id " failed") id e)
                  (unread e)))))))
 
 (defn- migrate!
@@ -432,25 +451,25 @@
   If the row survived whatever stopped the `DELETE`, it stays: the boots that follow with
   nothing to apply never ask for the lock and never see it, and the first one that has a
   migration to run names it (SPEC §7)."
-  [ds dir wait-ms migrations]
-  (let [recorded (recorded-ids ds)]
-    (if (and recorded (empty? (plan-migrations dir recorded migrations)))
+  [ds run migrations]
+  (let [recorded (recorded-ids ds run)]
+    (if (and recorded (empty? (plan-migrations run recorded migrations)))
       0
-      (let [holder  (acquire-lock! ds dir wait-ms)
-            applied (try (apply-pending! ds dir migrations)
+      (let [holder  (acquire-lock! ds run)
+            applied (try (apply-pending! ds run migrations)
                          (catch Throwable t
-                           (release-after-failure! ds holder t)
+                           (release-after-failure! ds run holder t)
                            (throw t)))]
-        (try (release-lock! ds holder)
+        (try (release-lock! ds run holder)
              (catch InterruptedException e (throw e))
              (catch Exception e
                ;; Which of the two it left — a row, or a lock table that is itself gone — is
                ;; not knowable from here without another statement that can fail the same way.
                (throw (ex-info (str "db-base: the migration run finished, but this boot's lock row could"
                                     " not be given back. If it is still there, the repair is: DELETE FROM "
-                                    lock-table " WHERE id = '" host-migrations-table "' AND holder = '"
+                                    lock-table " WHERE id = '" (:table run) "' AND holder = '"
                                     holder "'")
-                               {:config-key [:migrations :dir] :value dir :holder holder}
+                               {:config-key (:blame run) :value (:source run) :holder holder}
                                e))))
         applied))))
 
@@ -518,13 +537,13 @@
       (throw (ex-info "db-base: the JDBC driver that accepts :jdbc-url is not one the pool can use"
                       {:config-key [:jdbc-url] :driver (.getName (class driver))}))))
   (let [dir    (get-in config [:migrations :dir])
-        source (when dir (load-source dir))
+        run    (when dir (host-run dir (get-in config [:migrations :lock-wait-ms])))
+        source (when dir (load-source run))
         ds     (open-pool config)]
     (try
       (borrow-once! ds (get-in config [:pool :timeout-ms]))
       (cond-> {:datasource ds}
-        source (assoc :migrations-applied
-                      (migrate! ds dir (get-in config [:migrations :lock-wait-ms]) source)))
+        source (assoc :migrations-applied (migrate! ds run source)))
       (catch Throwable t
         (close-after-failure! ds t)
         (throw t)))))
