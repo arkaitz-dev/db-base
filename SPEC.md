@@ -724,12 +724,43 @@ into the applications and deleted. web-base §7's rule points the same way from 
 other side: when in doubt, leave it in the consumer, because moving code *into* a
 library later is cheap and getting it back out is not.
 
-**As of 2026-09-09 it has no consumer at all.** Not one, never mind two. That is the
-sentence to read before adding anything to §10's *In* list: what is written above is a
-design for consumers that do not exist yet, and web-base §7 says what happens to a base
-built before there are two — it fits the first one, and becomes a part of that
-application maintained separately. **Nothing enters the scope without a consumer that
-asked for it.**
+**As of 2026-09-21 it has one consumer**, and the exit condition needs two, so nothing
+below closes this section. Until 2026-09-20 it had none at all — that was the sentence
+to read before adding anything to §10's *In* list, and it is why §10's Integrant key
+waited until a host asked. **Nothing enters the scope without a consumer that asked for
+it**, and web-base §7 still says what happens to a base built before there are two: it
+fits the first one, and becomes a part of that application maintained separately.
+
+**The consumer is `demo/` in this repository**: a web application that serves pages with
+web-base and opens its database with this library, wired by Integrant, with an
+acceptance test of the join (`demo/test/demo/seam_test.clj`). It was built to answer one
+question honestly — *does db-base serve a real host as it stands?* — under web-base's
+own rule, that anything the demo needs and the library does not provide is a finding and
+not a licence to add code in passing.
+
+**What it found, written plainly because this paragraph is the falsification test.**
+
+- **Nothing was missing.** The host needed no library code that did not already exist.
+  The one thing added was §10's Integrant key, which §10 already specified and which had
+  been held back for exactly the gate above. `start`, `stop` and `ready?` covered the
+  whole lifecycle a host has: the boot, the shutdown hook, and `/health`.
+- **That cuts both ways.** A host that needs nothing new is a library that fits, and
+  also a library that is still nothing but the wiring of §6 and §7 — which is precisely
+  the shape the exit condition is watching for. One consumer cannot settle it. The
+  second one is what decides, and the honest reading today is that this one did not
+  move the argument in this library's favour.
+- **§8 is untouched.** The demo's session is a key in a cookie, not a store, so the
+  part of this document that is *not* wiring — the store's contract, where a zero-row
+  update is correct and an upsert resurrects a revoked session — has still never been
+  exercised by anyone. Plugging §8 into web-base's `:session {:store …}` port is the
+  next step, and it is a one-line change in the host by construction.
+- **One hazard the exercise surfaced, which belongs to the host and not here.**
+  Integrant's own `ex-info`, thrown when a key's `init-key` fails, carries `:value` —
+  the resolved configuration for that key, JDBC URL and password included. This
+  library's refusals echo neither, at any link of the cause chain, and §6 says so; but
+  a host that logs the exception Integrant threw rather than its cause prints the
+  password. Measured 2026-09-21 and pinned in the seam test, so the next person meets it
+  as an assertion instead of as an incident.
 
 **And a second thing would falsify the case in favour, earlier than the exit
 condition.** The argument above is that the decisions are the value. If, once the pool

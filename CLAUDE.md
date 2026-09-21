@@ -28,6 +28,13 @@ and observed to work**, never from convention. Observed:
     clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."
     clojure -M:test -n <namespace>         # one namespace
     clojure -M:test -v <namespace>/<var>   # one test
+    clojure -M:demo [port]                 # the host of §12, serving; the port is optional
+    clojure -M:demo-test                   # the acceptance test of the seam
+
+The demo is on `:demo` and `:demo-test` and **must never reach `:test`**:
+`structure_test`'s logging-backend scan reads the running JVM's classpath, and the web
+stack brings logback. Its own docstring says a backend arriving through a test extra
+"reds falsely but visibly, and the fix is to move it, never to filter the scan".
 
 `clojure -M:test -e '…'` does **not** evaluate: `:test`'s `:main-opts` hand the arguments
 to the test runner, which reads `-e` as `--exclude` and runs the tests as usual — the form
@@ -100,6 +107,18 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       - **The suite's `MERGE` cell measures a spelling**, not the statement: PostgreSQL 18
         takes `MERGE` with its own `SET v = …` and refuses the qualified `SET t.v` that H2
         takes and `dialect_test` fires. SQLite has no `MERGE` at all, so §3's claim holds.
+
+- [x] **A consumer, so §12 is a question with an answer** (2026-09-20/21). `demo/` is a
+      web application that serves pages with web-base 0.2.0 from Clojars and opens its
+      database with this library, wired by Integrant, with an acceptance test of the
+      join in `demo/test/demo/seam_test.clj`. **Nothing was missing**: the host needed no
+      library code that did not already exist, and the only thing added was §10's
+      Integrant key, which §10 already specified. That fits and also fails to move §12's
+      argument — written up there, because that paragraph is the falsification test.
+- [ ] **§8's session store, plugged into web-base's `:session {:store …}` port.** The
+      demo's session is a key in a cookie today, so §8 — the one part of the
+      specification that is not wiring — has still never been exercised. The host change
+      is one line by construction; the store is not written.
 
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
@@ -207,6 +226,17 @@ is any code to break.**
   starts clean and says nothing, until the first deploy that does have a migration fails
   naming a holder from days ago. The failure is loud when it matters and silent until
   then, on purpose; a test pins both halves.
+- **Integrant's own failure carries the configuration.** When an `init-key` throws,
+  `ig/init` does not halt what it built: it throws an `ex-info` whose data holds
+  `{:reason ::ig/build-threw-exception :key K :system <the partial system> :value V}`,
+  and `V` is the resolved configuration for that key — **JDBC URL and password
+  included** (measured 2026-09-21, pinned in `demo/test/demo/seam_test.clj`). This
+  library's refusals echo neither, at any link of the cause chain, so the line a host
+  logs is the *cause* and never the exception Integrant threw. It is the host's hazard
+  and not this library's, which is why the fix is documentation and an assertion rather
+  than anything in `src`. The same sentence has a second half: the caller must halt
+  `(:system (ex-data e))` itself, or a boot that failed halfway leaks whatever came
+  before the key that threw.
 - **HikariCP keeps the login timeout on `DriverManager`, which the whole JVM shares.** A
   pool's close waits for the login timeout of the last pool constructed, so timing tests
   keep their timeouts within the same whole second.

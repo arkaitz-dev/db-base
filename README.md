@@ -97,6 +97,31 @@ They run on H2 and SQLite, embedded, with no infrastructure — deliberately not
 engine this is deployed on, because a suite that ran on that engine would accept every
 mistake shaped like it.
 
+## The host that consumes it
+
+`demo/` is a small web application that serves pages with
+[web-base](https://clojars.org/dev.arkaitz/web-base) and opens its database with this
+library. It exists to answer one question — *does db-base serve a real host as it
+stands?* — and it is where the two libraries meet: neither mentions the other, the host
+gives each a map, and Integrant's `#ig/ref` is the whole of the coupling.
+
+```
+clojure -M:demo          # serves on the port config.edn names
+clojure -M:demo 3141     # or on the one you name
+clojure -M:demo-test     # the acceptance test of the join
+```
+
+It keeps its notes in `demo.db`, a SQLite file the host names and the first boot
+migrates; stop the process, start it again, and the notes are still there while the
+second boot applies nothing. Nothing it needs is on this library's `:paths` or `:deps` —
+the demo lives in aliases, so nothing a consumer receives changes because it exists.
+
+**One thing it turned up, which is the host's and not this library's**: when an
+Integrant key fails, the `ex-info` Integrant throws carries `:value`, the resolved
+configuration for that key — JDBC URL and password included. This library's own refusals
+echo neither, at any link of the cause chain. So what a host logs is the *cause*, never
+the exception Integrant threw. The seam test pins both halves.
+
 ## The honest part
 
 `SPEC.md` §12 argues that this library may not deserve to exist, and states the condition
@@ -106,7 +131,10 @@ is that the *decisions* are the value — which pool, which migration tool, what
 when a migration fails at boot, whether a password may ever be defaulted — and those get
 re-litigated in every project otherwise.
 
-As of this writing it has no consumer. Read §12 before adding anything.
+As of this writing it has **one** consumer, the `demo/` above, and the exit condition
+needs two. That host needed no library code that did not already exist — which is a
+library that fits, and equally a library that is still nothing but wiring. Read §12
+before adding anything.
 
 ## Licence
 
