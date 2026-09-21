@@ -547,9 +547,10 @@ answer.** That is what §12 means when it says the decisions are the value.
   Ring also asserts the round trip *on write*; a store that only calls `pr-str` will
   store a session that cannot be read back, and will do it quietly.
 
-**The table, and why these types.** One table: `VARCHAR(36)` key, `CLOB` data, `BIGINT`
-expiry as epoch milliseconds — auth-base's own convention. Measured on H2, H2 in
-PostgreSQL mode, HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
+**The table, and why these types.** One table, **`db_base_sessions`**, written here and
+never generated: `id VARCHAR(36)` as the primary key, `data CLOB`, `expires_at BIGINT` in
+epoch milliseconds — auth-base's own convention. Measured on H2, H2 in PostgreSQL mode,
+HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
 rejected by HSQLDB and by Derby. `VARCHAR(n)` for the data is worse than it looks — an
 over-long session throws on H2, HSQLDB and Derby and is silently truncated by SQLite, so
 the failure mode itself would depend on the engine. `CREATE TABLE IF NOT EXISTS` is not
@@ -558,37 +559,54 @@ with no recorded version can never be changed.
 
 **The five statements are ANSI by measured choice, not by luck, and a second engine
 would be a sibling namespace rather than a new layer.** Ring's port is already the
-abstraction: `dev.arkaitz.db-base.session.postgres` beside a `…session.mysql` on the day
-one is needed, each implementing the same three functions of a third party's protocol
-under §3. Adding an engine is adding a namespace. **A dialect table here would be the
-mistake**, and a tempting one, because it would make correctness a function of an
-enumerated list — and the first engine absent from that list breaks with no symptom
-until it is in production. It would also be more code than the five statements it
-abstracts, and being the only implementation, it would be shaped around the one engine
-that existed when it was written.
+abstraction, so adding an engine is adding a namespace, not a layer under the one that
+exists. **The namespace is `dev.arkaitz.db-base.session`, with no engine in its name**
+(decided with the user 2026-09-21), because there is no engine in the code: the five
+statements were measured on five. A `…session.mysql` is what appears on the day ANSI stops
+being enough, and this one goes on meaning what it says for every other engine. Naming
+this one after an engine would have been false twice over — the suite proves it on two
+engines that are deliberately not the host's — and would have made the second-engine
+question look answered.
 
-**Two control tables, not one, and the library's run goes first.** The library's table
-names are written here and never generated. A single shared table breaks three ways,
-each silently: a library upgrade adds a migration that sorts below ones already applied
-and is skipped forever; a tool that checksums applied migrations bricks every host's
-boot the day the library edits its own file; and the host's `reset` drops the library's
-history with its own.
+**A dialect table here would be the mistake**, and a tempting one, because it would make
+correctness a function of an enumerated list — and the first engine absent from that list
+breaks with no symptom until it is in production. It would also be more code than the
+five statements it abstracts, and being the only implementation, it would be shaped
+around the one engine that existed when it was written.
+
+**Two control tables, not one, and the library's run goes first.** This library records
+its own run in **`db_base_migrations`**, written here and never generated; the host keeps
+ragtime's own default, `ragtime_migrations`. §7's lock already keys its row by the name of
+the control table, so the two runs take different rows and neither waits for the other.
+A single shared table breaks three ways, each silently: a library upgrade adds a migration
+that sorts below ones already applied and is skipped forever; a tool that checksums
+applied migrations bricks every host's boot the day the library edits its own file; and
+the host's `reset` drops the library's history with its own.
 
 It ships **here**, with its own migration, in its own namespace, because it implements
 a third party's port under rule §3 and because its table is this library's own rather
 than the host's.
 
-**What it costs, as a number, so §12 can be applied to one.** This section is what puts
-`ring/ring-core` in `:deps`, and that is **1.02 MB in nine jars** — measured, 1,066,078
-bytes. `ring-core` itself is 34,567 of them: the rest is what it drags, and most of the
-rest is `commons-io` at 585 KB, `commons-codec` at 354 KB and `commons-fileupload2-core`
-at 70 KB. **File-upload machinery on the classpath of §4's bicycle rental, which never
-serves HTTP.** It is worth writing down next to the Integrant decision of §10, whose
-whole closure is 23,504 bytes — this section costs forty-five times that, and it was the
-one nobody thought to weigh. A host that already runs web-base or auth-base pays it
-once, since both impose ring-core too. A host that only wanted a pool pays it for a
-session store it may never construct, and §12's exit condition is where that gets
-settled.
+**What it costs, as a number — and why the number changed the answer.** `ring/ring-core`
+is **1.09 MB in eleven jars**, measured 2026-09-21 on the classpath the demo actually
+resolves. `ring-core` itself is 36 KB of that: the rest is what it drags, and most of the
+rest is `commons-io` at 572 KB, `commons-codec` at 348 KB and `commons-fileupload2-core`
+at 72 KB. **File-upload machinery on the classpath of §4's bicycle rental, which never
+serves HTTP.** Beside it, §10's whole Integrant closure is 23,504 bytes — this is
+forty-five times that, and it was the one nobody thought to weigh.
+
+**So it does not go in `:deps`** (decided with the user 2026-09-21, amending what this
+section assumed). `dev.arkaitz.db-base.session` is optional the way §10's key is, and one
+step further: it is not declared at all. A host that wants the store brings `ring-core`
+itself — every host of web-base or auth-base already has it, since both impose it — and a
+host that only wanted a pool pays nothing for a store it will never construct. That is
+rule 1 of this project applied to its own specification: *impose what you are, not what
+you use*. The price is honest and is written in the README: requiring the namespace
+without `ring-core` on the classpath fails as a missing class rather than as a message of
+ours. The suite carries `ring-core` on `:test` alone, which the dependency scan cannot
+see — it resolves with no alias — and a subprocess guard checks that the core namespace
+still loads where ring is absent, because a stray `require` compiles, loads and passes
+every other test.
 
 **auth-base's store is a different case and does not ship here.** Its protocol is ours,
 and the adapter is a page of code the host writes over a datasource this library
@@ -661,6 +679,9 @@ web-base and is wired the way web-base is — asked.)
 | The pool is HikariCP; migrations run on ragtime, under a lock of this library's own | §6, §7 |
 | A stored session store ships here, with its own table and its own control table | §8 |
 | The store never upserts, and a zero-row update is correct | §8 |
+| Its namespace names no engine, because its statements assume none | §8 |
+| `ring-core` is the host's: the store's namespace is optional and undeclared | §8 |
+| Expired rows are reclaimed by a function the operator calls, never on write | §8, §9 |
 | §3 is proven against two engines, not by review: H2 strict beside SQLite permissive, with which engine refuses which form pinned | §3 |
 | The host's engine is PostgreSQL, chosen from three that were all run; the library assumes none of them, and the test pair is deliberately not it | §3 |
 | Integrant is used, not imposed: an optional namespace, one key | §10 |
@@ -668,9 +689,14 @@ web-base and is wired the way web-base is — asked.)
 
 **Open**
 
-- **Reclaiming expired rows**: on write, or by an operator calling a function this
-  library exposes. Not on a timer — §9. This is only about space: an expired session is
-  already invisible, because §8 puts the expiry in the read, and that part is settled.
+Nothing. The last one closed 2026-09-21.
+
+- ~~**Reclaiming expired rows**~~: **settled — a function the operator calls**, and
+  nothing else. Not on write: that is a second statement on every request that touches a
+  session, and a delete that can block in a request's path. Not on a timer — §9. An
+  expired session is already invisible, because §8 puts the expiry in the read, so this
+  only ever concerned disk. If nobody calls it the table grows, which is visible, and is
+  the host's.
 
 **The residue is measured, and what is left of it is a rule rather than a question.**
 
