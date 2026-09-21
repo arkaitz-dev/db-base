@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The host's logging, not the library's: db-base ships no backend, and HikariCP's
+     facade logs nowhere until one arrives. INFO keeps the boot legible; the pool's
+     DEBUG dump of every setting is useful exactly once. -->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{28} — %msg%n</pattern>
+    </encoder>
+  </appender>
+  <logger name="com.zaxxer.hikari" level="INFO"/>
+  <logger name="org.eclipse.jetty" level="INFO"/>
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

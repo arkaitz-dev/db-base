@@ -1,0 +1,22 @@
+;; The host's system. Every value here is the host's decision, not a library's: the
+;; database file, the pool, how long a boot waits for another instance's migrations,
+;; and the port. db-base never reads a file nobody named, and this is where it is named.
+{:dev.arkaitz.db-base/database
+ {:jdbc-url   "jdbc:sqlite:demo.db"
+  ;; SQLite has no accounts; db-base still requires both, and never defaults them.
+  :user       ""
+  :password   ""
+  :pool       {:max 4 :timeout-ms 5000}
+  :migrations :none}
+
+ :demo/web-config {:db          #ig/ref :dev.arkaitz.db-base/database
+                   ;; Generated once with (dev.arkaitz.web-base.session/generate-key) and
+                   ;; kept out of the repository. web-base refuses to invent one.
+                   :session-key #wb/env "WB_SESSION_KEY"
+                   ;; The named opt-out for http://localhost.
+                   :secure?     false}
+
+ :dev.arkaitz.web-base/handler #ig/ref :demo/web-config
+
+ :dev.arkaitz.web-base/server {:handler #ig/ref :dev.arkaitz.web-base/handler
+                               :port    3000}}
