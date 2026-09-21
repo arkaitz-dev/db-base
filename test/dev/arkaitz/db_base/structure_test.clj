@@ -100,7 +100,7 @@
   SPEC §10's, and only `dev.arkaitz.db-base.integrant` may name it — which this scan
   cannot express, since it asks the same question of every file, so a scan of its own
   says that (decided with the user 2026-09-20, when the first host asked)."
-  #{"ragtime" "resauce" "integrant" "dev.arkaitz.db-base"})
+  #{"ragtime" "resauce" "integrant" "ring" "dev.arkaitz.db-base"})
 
 (def ^:private class-roots #{"java" "javax" "clojure.lang" "com.zaxxer.hikari"})
 
@@ -600,7 +600,7 @@
   and the hole cannot be widened by adding a name here. §10's Integrant scan sets the
   precedent: it asserts that its one exempt file DOES reference integrant, because a scan
   that found nothing there would be finding nothing anywhere."
-  #{})
+  #{'dev.arkaitz.db-base.session})
 
 (defn- loading-report
   "One JVM on the classpath a CONSUMER resolves — `-Srepro`, so no alias and no user
@@ -619,7 +619,13 @@
   expiry is its own message."
   [^File project-root namespaces exempt]
   (let [form    (pr-str
-                 (list 'let ['r '(fn [n] (try (require n) nil (catch Throwable e [n (ex-message e)])))
+                 (list 'let [;; The whole cause chain, because a failed require reports
+                             ;; the location at the top and names the missing resource
+                             ;; underneath: one frame would say `Syntax error
+                             ;; macroexpanding` and nothing about what was missing.
+                             'why '(fn [t] (apply str (interpose " | " (keep ex-message
+                                                        (take-while some? (iterate ex-cause t))))))
+                             'r '(fn [n] (try (require n) nil (catch Throwable e [n (why e)])))
                              'nss (list 'quote (vec namespaces))
                              'exempt (list 'quote (vec exempt))]
                        '(let [failed (into {} (keep r nss))]
@@ -635,7 +641,7 @@
                                 :exempt-need-ring
                                 (into {} (for [n exempt
                                                :let [e (try (require n) nil
-                                                            (catch Throwable t (str (ex-message t))))]]
+                                                            (catch Throwable t (why t)))]]
                                            [n (boolean (and e (re-find #"ring" e)))]))
                                 ;; Asked for by name rather than by looking for a jar on a
                                 ;; path: what decides is whether a consumer's JVM resolves
@@ -693,6 +699,7 @@
         report       (loading-report project-root expected may-need-ring)]
     (is (= #{} (set/difference '#{dev.arkaitz.db-base
                                   dev.arkaitz.db-base.integrant
+                                  dev.arkaitz.db-base.session
                                   dev.arkaitz.db-base.session.schema}
                                (set derived)))
         (str "precondition: the namespaces come from the sources on disk, and every one"

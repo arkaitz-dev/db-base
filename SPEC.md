@@ -540,8 +540,12 @@ answer.** That is what §12 means when it says the decisions are the value.
   is a miss, so the expiry predicate belongs in the read.
 - **`delete-session` accepts a nil key** and returns without touching the database.
   Ring passes nil on the rotation path, which web-base already documents.
-- **The key is a `java.util.UUID`**, which is what Ring's own store does and what the
-  protocol's docstring asks for. Nothing of ours in a var root.
+- **The key is a UUID, and it reaches the store as its string.** Ring's own memory store
+  mints `(str (UUID/randomUUID))`, and the middleware compares what `write-session`
+  returns against the cookie's value, which is a `String` — so a `java.util.UUID` handed
+  back would never be `=` to it and the cookie would be re-set on every request (read from
+  ring-core 1.15.5, 2026-09-21; this section previously said the key was the UUID object).
+  Thirty-six characters is exactly the column §8 names. Nothing of ours in a var root.
 - **Sessions are EDN, `pr-str` and `clojure.edn/read-string`, with `:readers` passed
   through.** It is what Ring's cookie store does and it imports no codec §3 forbids.
   Ring also asserts the round trip *on write*; a store that only calls `pr-str` will
@@ -549,7 +553,10 @@ answer.** That is what §12 means when it says the decisions are the value.
 
 **The table, and why these types.** One table, **`db_base_sessions`**, written here and
 never generated: `id VARCHAR(36)` as the primary key, `data CLOB`, `expires_at BIGINT` in
-epoch milliseconds — auth-base's own convention. Measured on H2, H2 in PostgreSQL mode,
+epoch milliseconds — auth-base's own convention. That last one is also the ceiling the
+store saturates at rather than summing past: a lifetime with more room than the clock has
+left overflows, and Clojure's `+` throws on that, so a lifetime the constructor accepts
+would otherwise have made every write fail (measured 2026-09-21). Measured on H2, H2 in PostgreSQL mode,
 HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
 rejected by HSQLDB and by Derby. `VARCHAR(n)` for the data is worse than it looks — an
 over-long session throws on H2, HSQLDB and Derby, and SQLite takes it without a word: a

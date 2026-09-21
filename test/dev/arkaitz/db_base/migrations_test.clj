@@ -39,15 +39,6 @@
   [f]
   (first (ts/elapsed-ms 15000 f)))
 
-(defn- running
-  "Runs `f` on a daemon thread; returns the thread and a promise of [:ok v] or [:threw e]."
-  [f]
-  (let [result (promise)
-        thread (doto (Thread. ^Runnable #(deliver result (try [:ok (f)] (catch Throwable t [:threw t]))))
-                 (.setDaemon true)
-                 (.start))]
-    [thread result]))
-
 (defn- waiting-for-the-lock?
   "Whether that thread is inside the wait for the lock, read from its own stack: the
   overlap is observed, not assumed."
@@ -370,14 +361,14 @@
   (doseq [[engine url] (ts/engines)]
     (fns/reset-gate!)
     (let [t0            (System/currentTimeMillis)
-          [_ first-run] (running #(ts/boot (ts/config url "gated")))]
+          [_ first-run] (ts/running #(ts/boot (ts/config url "gated")))]
       (is (= true (deref @fns/arrived 20000 ::never))
           (str engine ": precondition: the first boot is inside a migration, holding the lock"))
       ;; Its wait is wide because the test spends the time before `release`: a third boot,
       ;; a pool close and its assertions. Nothing here asserts a duration — what proves it
       ;; waited is its own stack, and what proves the wait is bounded is the third boot.
       (let [waiting (assoc-in (ts/config url "gated") [:migrations :lock-wait-ms] 20000)
-            [second-thread second-run] (running #(ts/boot waiting))]
+            [second-thread second-run] (ts/running #(ts/boot waiting))]
         (is (wait-until 20000 #(waiting-for-the-lock? second-thread))
             (str engine ": precondition: the second boot is waiting for the lock, not migrating"))
         (is (= 1 (count (ts/lock-rows url)))
@@ -525,7 +516,7 @@
 (deftest a-boot-gives-back-its-own-lock-row-and-no-other
   (doseq [[engine url] (ts/engines)]
     (fns/reset-gate!)
-    (let [[_ run] (running #(ts/boot (ts/config url "gated")))]
+    (let [[_ run] (ts/running #(ts/boot (ts/config url "gated")))]
       (is (= true (deref @fns/arrived 20000 ::never))
           (str engine ": precondition: the boot is inside a migration, holding the lock"))
       (is (= 1 (count (ts/lock-rows url)))
@@ -552,7 +543,7 @@
 (deftest a-lock-that-cannot-be-given-back-stops-the-boot-after-the-migrations-applied
   (doseq [[engine url] (ts/engines)]
     (fns/reset-gate!)
-    (let [[_ run] (running #(ts/boot (ts/config url "gated")))]
+    (let [[_ run] (ts/running #(ts/boot (ts/config url "gated")))]
       (is (= true (deref @fns/arrived 20000 ::never))
           (str engine ": precondition: the boot is inside a migration, holding the lock"))
       (ts/execute! url "DROP TABLE db_base_migration_lock")
@@ -599,7 +590,7 @@
                                       (ts/execute! url (str "DELETE FROM db_base_migration_lock"
                                                          " WHERE id = 'ragtime_migrations'")))
                                     (apply honest ds sql params))))
-      (let [[_ run] (running #(ts/boot (assoc-in (ts/config url "gated") [:migrations :lock-wait-ms] 0)))]
+      (let [[_ run] (ts/running #(ts/boot (assoc-in (ts/config url "gated") [:migrations :lock-wait-ms] 0)))]
         (try (is (= true (deref @fns/arrived 20000 ::never))
                  (str engine ": precondition: the boot is inside a migration rather than refused"))
              (finally (alter-var-root row-var (constantly honest))))

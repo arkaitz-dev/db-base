@@ -190,5 +190,16 @@
 
 (defn pair [e] [(ex-message e) (ex-data e)])
 
+(defn running
+  "Runs `f` on a daemon thread; returns the thread and a promise of `[:ok v]` or
+  `[:threw e]`. Shared by the two suites that need one operation observably in flight
+  while another lands."
+  [f]
+  (let [result (promise)
+        thread (doto (Thread. ^Runnable #(deliver result (try [:ok (f)] (catch Throwable t [:threw t]))))
+                 (.setDaemon true)
+                 (.start))]
+    [thread result]))
+
 (defn lock-rows [url]
   (query url "SELECT id, holder, acquired_at FROM db_base_migration_lock"))
