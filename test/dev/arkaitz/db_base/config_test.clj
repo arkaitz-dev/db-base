@@ -29,9 +29,9 @@
    :user       ts/user-sentinel
    :password   ts/password-sentinel
    :pool       {:max 1 :timeout-ms 5000}
-   :migrations :none})
+   :migrations :none :sessions :none})
 
-(def ^:private top-keys "[:jdbc-url :migrations :password :pool :user]")
+(def ^:private top-keys "[:jdbc-url :migrations :password :pool :sessions :user]")
 
 (defn- refusal [message data] [(str "db-base: " message) data])
 
@@ -48,7 +48,11 @@
                            {:config-key [:migrations] :value %})
         dir      #(refusal "[:migrations :dir] must be a non-blank string" {:config-key [:migrations :dir] :value %})
         lock     #(refusal "[:migrations :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
-                           {:config-key [:migrations :lock-wait-ms] :value %})]
+                           {:config-key [:migrations :lock-wait-ms] :value %})
+        sess     #(refusal ":sessions must be :none or a map of :lock-wait-ms"
+                           {:config-key [:sessions] :value %})
+        sess-ms  #(refusal "[:sessions :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
+                           {:config-key [:sessions :lock-wait-ms] :value %})]
     (concat
      [["not a map: 42" 42 (refusal "configuration must be a map" {:config-key []})]
       ["not a map: nil" nil (refusal "configuration must be a map" {:config-key []})]
@@ -119,7 +123,27 @@
      (for [v [::missing nil -1 1.5 1.5M 3/2 "10" 2147483648 2147483648N]]
        [(str "[:migrations :lock-wait-ms] " (pr-str v))
         (assoc base :migrations (cond-> {:dir "db/migration"} (not= ::missing v) (assoc :lock-wait-ms v)))
-        (lock (when-not (= ::missing v) v))]))))
+        (lock (when-not (= ::missing v) v))])
+     ;; SPEC §8's key, asked for like every other and never defaulted. `:none` is the
+     ;; opt-out, exactly as it is for :migrations, so a host says what it wants.
+     [[":sessions missing" (dissoc base :sessions) (sess nil)]
+      [":sessions an unknown keyword" (assoc base :sessions :nothing) (sess :nothing)]
+      [":sessions a bare string" (assoc base :sessions "yes") (sess "yes")]
+      [":sessions a vector" (assoc base :sessions []) (sess [])]
+      [":sessions true" (assoc base :sessions true) (sess true)]
+      [":sessions {}" (assoc base :sessions {}) (sess-ms nil)]
+      [":sessions with :dir, the copy-paste from :migrations"
+       (assoc base :sessions {:dir "x"})
+       (refusal "unknown key [:dir] in [:sessions] — it takes [:lock-wait-ms]"
+                {:config-key [:sessions :dir]})]
+      [":sessions with an unknown key beside a wrong wait: the unknown is named first"
+       (assoc base :sessions {:table "x" :lock-wait-ms -1})
+       (refusal "unknown key [:table] in [:sessions] — it takes [:lock-wait-ms]"
+                {:config-key [:sessions :table]})]]
+     (for [v [nil -1 1.5 1.5M 3/2 "10" 2147483648 2147483648N]]
+       [(str "[:sessions :lock-wait-ms] " (pr-str v))
+        (assoc base :sessions {:lock-wait-ms v})
+        (sess-ms v)]))))
 
 (deftest start-refuses-each-malformed-configuration-with-an-exact-message-and-config-key
   (let [handle (db/start base)]
@@ -153,7 +177,13 @@
                          ["[:migrations :lock-wait-ms] 2147483647, the ceiling itself"
                           (assoc base :migrations {:dir "db/migration" :lock-wait-ms 2147483647})]
                          ["[:migrations :lock-wait-ms] a BigInt" (assoc base :migrations {:dir "db/migration" :lock-wait-ms 10N})]
-                         ["[:migrations :lock-wait-ms] an int" (assoc base :migrations {:dir "db/migration" :lock-wait-ms (int 5)})]]]
+                         ["[:migrations :lock-wait-ms] an int" (assoc base :migrations {:dir "db/migration" :lock-wait-ms (int 5)})]
+                         ["[:sessions :lock-wait-ms] 0, a single attempt"
+                          (assoc base :sessions {:lock-wait-ms 0})]
+                         ["[:sessions :lock-wait-ms] 2147483647, the ceiling itself"
+                          (assoc base :sessions {:lock-wait-ms 2147483647})]
+                         ["[:sessions :lock-wait-ms] a BigInt" (assoc base :sessions {:lock-wait-ms 10N})]
+                         ["[:sessions :lock-wait-ms] an int" (assoc base :sessions {:lock-wait-ms (int 5)})]]]
       (is (= ::ts/no-throw (ts/attempt #(#'db/validate! cfg))) label)))
   (testing "a URL no driver accepts is refused before the pool sees it, naming :jdbc-url"
     (let [e (ts/thrown #(db/start (assoc base :jdbc-url (str "jdbc:nope://" ts/user-sentinel ":"
@@ -192,7 +222,7 @@
                       (prn [:result
                             (try ((resolve 'dev.arkaitz.db-base/start)
                                   {:jdbc-url "jdbc:h2:mem:raised-floor;DB_CLOSE_DELAY=-1" :user "" :password ""
-                                   :pool {:max 1 :timeout-ms 1000} :migrations :none})
+                                   :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none})
                                  :started
                                  (catch clojure.lang.ExceptionInfo e
                                    [(ex-message e) (ex-data e) (some-> e ex-cause class .getName)
@@ -331,7 +361,7 @@
       (let [before (ts/pool-number)
             e      (ts/thrown #(db/start {:jdbc-url url :user ts/user-sentinel
                                           :password ts/password-sentinel
-                                          :pool {:max 1 :timeout-ms 1000} :migrations :none}))
+                                          :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none}))
             after  (ts/pool-number)]
         (is (= ["db-base: the JDBC driver that accepts :jdbc-url is not one the pool can use"
                 {:config-key [:jdbc-url] :driver (.getName (class reified))}]

@@ -1,6 +1,11 @@
 (ns dev.arkaitz.db-base.test-support
   "Witnesses shared by the lifecycle and configuration tests. Each exists because
-  the property it observes has no other synchronous, attributable signal."
+  the property it observes has no other synchronous, attributable signal.
+
+  The boot helpers at the end are shared by the two migration suites — §7's, which is
+  about the host's run, and §8's, which is about this library's own. They live here
+  rather than in either so that neither copies the other's fixture."
+  (:require [dev.arkaitz.db-base :as db])
   (:import [clojure.lang ExceptionInfo]
            [java.net InetAddress ServerSocket Socket]
            [java.sql Connection DriverManager ResultSet]))
@@ -49,11 +54,16 @@
   ["ON CONFLICT" "RETURNING" "MERGE INTO" "WHEN MATCHED" "LISTEN" "NOTIFY" "jsonb"])
 
 (def scan-only-tokens
-  "Forbidden in src, and invisible to the engines: both H2 and SQLite take
-  `CREATE TABLE IF NOT EXISTS`, which SPEC §7 refuses because Derby rejects it. A form
-  the pair accepts cannot be a cell of `dialect_test`'s matrix — nothing would refuse it
-  — so the scan is the only place it can be said at all."
-  ["IF NOT EXISTS"])
+  "Forbidden in src, and invisible to the engines. Both H2 and SQLite take
+  `CREATE TABLE IF NOT EXISTS`, which SPEC §7 refuses because Derby rejects it, and both
+  take a column typed as the second one here, which §8 refuses because HSQLDB and Derby
+  reject it. A form the pair accepts cannot be a cell of `dialect_test`'s matrix —
+  nothing would refuse it — so the scan is the only place either can be said at all.
+  §3 promised the second of these would arrive when §8 had code; it has, and §8's own
+  column type is the one it protects.
+
+  The leading space is deliberate: without it the token fires on the middle of `CONTEXT`."
+  ["IF NOT EXISTS" " TEXT"])
 
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")
@@ -137,3 +147,48 @@
   (let [t0  (System/nanoTime)
         res (deref (future (f)) guard-ms ::hang)]
     [res (/ (- (System/nanoTime) t0) 1e6)]))
+
+(defn engines
+  "The two engines §3 is proven against: one strict, one permissive, both embedded."
+  []
+  [["H2" (h2-memory-url url-sentinel)]
+   ["SQLite" (sqlite-file-url url-sentinel)]])
+
+(defn config
+  "A configuration over `url` whose host migrations come from `db-base-test/<prefix>`.
+  Secrets in every field that has one, so the leak check has something to find. The
+  borrow timeout is wide because nothing that uses this asserts a duration and the first
+  SQLite connection of a JVM unpacks a native library: measured 655 ms cold against 0 ms
+  warm, and a loaded machine turned 1000 ms into a boot that failed for the wrong reason.
+  `:sessions` is `:none` here; a test that wants this library's own run assocs it."
+  [url prefix]
+  {:jdbc-url url :user user-sentinel :password password-sentinel
+   :pool {:max 2 :timeout-ms 5000}
+   :migrations {:dir (str "db-base-test/" prefix) :lock-wait-ms 1000}
+   :sessions :none})
+
+(defn execute!
+  "One statement, over a connection of the caller's own."
+  [url sql]
+  (with-open [^Connection c (DriverManager/getConnection url user-sentinel password-sentinel)
+              st (.createStatement c)]
+    (.execute st sql)))
+
+(defn tables
+  "Table names in lower case: H2 reports them upper-cased. Ask with `contains?` and an
+  exact name — H2 lists its own tables here too, one of which is called `sessions`."
+  [url]
+  (with-open [^Connection c (DriverManager/getConnection url user-sentinel password-sentinel)
+              ^ResultSet rs (.getTables (.getMetaData c) nil nil "%" (into-array String ["TABLE"]))]
+    (loop [acc #{}] (if (.next rs) (recur (conj acc (.toLowerCase (.getString rs "TABLE_NAME")))) acc))))
+
+(defn boot
+  "Starts, returns the handle without its datasource, and stops."
+  [cfg]
+  (let [handle (db/start cfg)]
+    (try (dissoc handle :datasource) (finally (db/stop handle)))))
+
+(defn pair [e] [(ex-message e) (ex-data e)])
+
+(defn lock-rows [url]
+  (query url "SELECT id, holder, acquired_at FROM db_base_migration_lock"))

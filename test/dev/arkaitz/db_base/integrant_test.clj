@@ -55,7 +55,8 @@
   (let [url    (ts/h2-memory-url ts/url-sentinel)
         config {:jdbc-url url :user ts/user-sentinel :password ts/password-sentinel
                 :pool {:max 2 :timeout-ms 5000}
-                :migrations {:dir "db-base-test/three" :lock-wait-ms 1000}}
+                :migrations {:dir "db-base-test/three" :lock-wait-ms 1000}
+                :sessions :none}
         before (ts/pool-number)
         system (ig/init {:dev.arkaitz.db-base/database config})
         handle (get system :dev.arkaitz.db-base/database)

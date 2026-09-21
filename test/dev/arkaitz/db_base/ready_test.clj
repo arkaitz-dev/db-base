@@ -49,7 +49,7 @@
 
 (deftest ready?-refuses-what-is-not-a-handle-from-start-without-echoing-it
   (let [config  {:jdbc-url ts/url-sentinel :user ts/user-sentinel :password ts/password-sentinel
-                 :pool {:max 1 :timeout-ms 1000} :migrations :none}
+                 :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none}
         refusal ["db-base: ready? takes the handle start returned, whose :datasource is a javax.sql.DataSource"
                  {:config-key [:datasource]}]]
     (doseq [[label handle] [["nil" nil]
@@ -131,7 +131,7 @@
 (deftest ready?-is-true-on-a-started-handle-false-while-its-pool-is-exhausted-and-false-after-stop--h2
   (let [before (ts/pool-number)
         handle (db/start {:jdbc-url (ts/h2-memory-url "ready") :user "" :password ""
-                          :pool {:max 1 :timeout-ms 1000} :migrations :none})
+                          :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none})
         ds     ^HikariDataSource (:datasource handle)]
     (try
       (is (= (inc (or before 0)) (ts/pool-number)) "precondition: start constructed exactly one pool")
@@ -165,7 +165,7 @@
           ;; ready? does with it rather than from the pool refusing to lend.
           (let [handle (try (System/setProperty bypass "600000")
                             (db/start {:jdbc-url url :user "" :password ""
-                                       :pool {:max 1 :timeout-ms 1000} :migrations :none})
+                                       :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none})
                             (finally (System/clearProperty bypass)))
                 ds     ^HikariDataSource (:datasource handle)]
             (try

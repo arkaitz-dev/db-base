@@ -10,7 +10,11 @@
   ;; A classpath prefix, not a path on disk: the migrations travel with the application,
   ;; here under demo/resources. `:lock-wait-ms` is how long this boot waits for another
   ;; instance to finish migrating before it fails and names it.
-  :migrations {:dir "db-base-demo/migration" :lock-wait-ms 5000}}
+  :migrations {:dir "db-base-demo/migration" :lock-wait-ms 5000}
+  ;; §8's table is not wanted yet: this host's session still lives in a cookie. The key
+  ;; is asked for like every other, so a host says what it wants rather than inheriting
+  ;; a table it never asked for.
+  :sessions   :none}
 
  :demo/web-config {:db          #ig/ref :dev.arkaitz.db-base/database
                    ;; Generated once with (dev.arkaitz.web-base.session/generate-key) and

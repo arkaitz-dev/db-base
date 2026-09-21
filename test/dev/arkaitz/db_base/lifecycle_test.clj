@@ -56,7 +56,7 @@
   ;; :max 2 and 1250 ms are HikariCP's default of neither, so a pool that ignored
   ;; either key could not pass by coincidence.
   (let [cfg    {:jdbc-url (ts/h2-memory-url "lifecycle") :user "" :password ""
-                :pool {:max 2 :timeout-ms 1250} :migrations :none}
+                :pool {:max 2 :timeout-ms 1250} :migrations :none :sessions :none}
         before (ts/pool-number)
         handle (db/start cfg)
         n      (ts/pool-number)
@@ -133,7 +133,7 @@
   (let [{:keys [port accepted close!]} (ts/silent-server)
         cfg    {:jdbc-url (str "jdbc:h2:tcp://127.0.0.1:" port "/mem:" ts/url-sentinel)
                 :user ts/user-sentinel :password ts/password-sentinel
-                :pool {:max 1 :timeout-ms 1000} :migrations :none}
+                :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none}
         before (ts/pool-number)]
     (try
       (let [[e :as outcome] (ts/elapsed-ms 10000 #(ts/thrown (fn [] (db/start cfg))))]
@@ -156,7 +156,7 @@
   (let [url    (ts/h2-memory-url ts/url-sentinel)
         right  (str ts/password-sentinel "-right")
         cfg    {:jdbc-url url :user ts/user-sentinel :password right
-                :pool {:max 1 :timeout-ms 1250} :migrations :none}]
+                :pool {:max 1 :timeout-ms 1250} :migrations :none :sessions :none}]
     (with-open [_ (DriverManager/getConnection url ts/user-sentinel right)])
     (is (= ::ts/no-throw (ts/attempt #(db/stop (db/start cfg))))
         "positive control: the right password starts, so the fixture database exists with it")
@@ -180,7 +180,7 @@
 (deftest stop-closes-the-pool-even-when-the-calling-thread-is-interrupted
   (let [before (ts/pool-number)
         handle (db/start {:jdbc-url (ts/h2-memory-url "interrupted-stop") :user "" :password ""
-                          :pool {:max 1 :timeout-ms 1000} :migrations :none})
+                          :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none})
         n      (ts/pool-number)]
     (is (= (inc (or before 0)) n) "precondition: a pool was constructed")
     (is (= [(str "HikariPool-" n ":housekeeper")]
@@ -201,7 +201,7 @@
   (let [{:keys [port close!]} (ts/silent-server)
         cfg    {:jdbc-url (str "jdbc:h2:tcp://127.0.0.1:" port "/mem:" ts/url-sentinel)
                 :user ts/user-sentinel :password ts/password-sentinel
-                :pool {:max 1 :timeout-ms 1000} :migrations :none}
+                :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none}
         before (ts/pool-number)]
     (try
       (.interrupt (Thread/currentThread))
@@ -239,7 +239,7 @@
           ;; about a second, without H2's JVM-global wrong-password delay in the picture.
           url      (str (ts/h2-memory-url ts/url-sentinel) ";INIT=RUNSCRIPT FROM 'no-such-file.sql'")
           cfg      {:jdbc-url url :user ts/user-sentinel :password ts/password-sentinel
-                    :pool {:max 1 :timeout-ms 1000} :migrations :none}]
+                    :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none}]
       (alter-var-root var (constantly (fn [resource]
                                         (reset! closed resource)
                                         (honest resource)

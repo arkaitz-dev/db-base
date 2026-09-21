@@ -552,8 +552,12 @@ never generated: `id VARCHAR(36)` as the primary key, `data CLOB`, `expires_at B
 epoch milliseconds — auth-base's own convention. Measured on H2, H2 in PostgreSQL mode,
 HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
 rejected by HSQLDB and by Derby. `VARCHAR(n)` for the data is worse than it looks — an
-over-long session throws on H2, HSQLDB and Derby and is silently truncated by SQLite, so
-the failure mode itself would depend on the engine. `CREATE TABLE IF NOT EXISTS` is not
+over-long session throws on H2, HSQLDB and Derby, and SQLite takes it without a word: a
+10,000-character value went into a `VARCHAR(8)` and came back whole, measured 2026-09-21
+on sqlite-jdbc 3.53.4.0, which ignores the bound rather than truncating as this section
+first said. Either way **the failure mode itself depends on the engine**, which is the
+argument; and it is why the round trip that pins this type in the suite can only be
+carried by the strict half of §3's pair. `CREATE TABLE IF NOT EXISTS` is not
 an escape either: Derby rejects it, it would run outside §7's boot gate, and a table
 with no recorded version can never be changed.
 

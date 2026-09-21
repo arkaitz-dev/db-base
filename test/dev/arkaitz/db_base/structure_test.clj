@@ -649,7 +649,7 @@
 
 (deftest no-var-root-holds-a-datasource-or-a-box--not-even-while-a-pool-is-open
   (let [handle (db/start {:jdbc-url (str "jdbc:h2:mem:var-roots-" (random-uuid) ";DB_CLOSE_DELAY=-1")
-                          :user "" :password "" :pool {:max 1 :timeout-ms 1000} :migrations :none})]
+                          :user "" :password "" :pool {:max 1 :timeout-ms 1000} :migrations :none :sessions :none})]
     (try
       (testing "positive controls: the walk sees state directly, in a collection and closed over by a fn"
         (is (reaches-state? (atom nil) 4))
@@ -729,17 +729,25 @@
     (is (= [["IF NOT EXISTS" "CREATE TABLE IF NOT EXISTS db_base_migration_lock (id VARCHAR(64))"]]
            (dialect-in (str "(ns x) (defn ddl [] (str \"CREATE TABLE IF NOT EXISTS"
                             " db_base_migration_lock (id VARCHAR(64))\"))")))
-        "SPEC §7: the form Derby rejects, which both test engines take — the scan is the only place it can be said"))
+        "SPEC §7: the form Derby rejects, which both test engines take — the scan is the only place it can be said")
+    (is (= [[" TEXT" "CREATE TABLE db_base_sessions (id VARCHAR(36), data TEXT NOT NULL)"]]
+           (dialect-in (str "(ns x) (def ddl \"CREATE TABLE db_base_sessions (id VARCHAR(36),"
+                            " data TEXT NOT NULL)\")")))
+        "SPEC §8: the column type HSQLDB and Derby refuse and both test engines take"))
   (testing "controls: what must not fire"
     (is (= [] (dialect-in "(ns x) (defn f [a b] (merge a b))")) "the language's own merge")
     (is (= [] (dialect-in "(ns x) (def s \"on conflict do nothing\")"))
         "lower case is prose: matching it case-insensitively would fire on this repository's own writing")
     (is (= [] (dialect-in "(ns x) (def s \"a conflict between two instances, returning nothing\")"))
         "the words alone, which is how §7's own messages talk")
+    (is (= [] (dialect-in "(ns x) (def s \"read in the CONTEXT of the boot that applied it\")"))
+        "CONTEXT, which is why that token carries a leading space")
+    (is (= [] (dialect-in "(ns x) (def s \"the text of the message a refusal carries\")"))
+        "lower case again: prose about text is not a column type")
     (is (= [] (dialect-in "(ns x) (def p #\"RETURNING\")"))
         "a regular expression is a Pattern, not a string — stated as a control because it is what this scan cannot see"))
   (is (= #{"ON CONFLICT" "RETURNING" "MERGE INTO" "WHEN MATCHED" "LISTEN" "NOTIFY" "jsonb"
-           "IF NOT EXISTS"}
+           "IF NOT EXISTS" " TEXT"}
          (set dialect-tokens))
       (str "every token above has a control of its own, written by hand: adding one to the"
            " shared list means writing its control here, and this is what says so"))

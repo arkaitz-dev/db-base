@@ -120,6 +120,17 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       specification that is not wiring — has still never been exercised. The host change
       is one line by construction; the store is not written.
 
+- [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
+      the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
+      `WHERE id = ? AND holder = ?`; drop either predicate and both suites stay green,
+      because no test ever constructs the case the `holder` clause guards — boot A dies
+      holding a row, boot B later takes that same id with a fresh holder, and A's stray
+      release-after-failure deletes B's live row. `a-boot-gives-back-its-own-lock-row-and-no-other`
+      plants two rows but both with foreign holders, so it misses it too. Severity: a
+      cross-instance defect that only shows under a failure path, which is where it would
+      hurt most. Deferred because building it needs a boot that fails *while holding*, and
+      that is §7's suite rather than §8's.
+
 Three threads belong to **auth-base**, not here, and need raising before that repository
 is touched:
 

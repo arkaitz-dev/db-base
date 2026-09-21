@@ -36,6 +36,7 @@
   source's order, never from the order the control table returns them in."
   (:require [clojure.string :as str]
             [ragtime.core :as ragtime]
+            [dev.arkaitz.db-base.session.schema :as schema]
             [ragtime.next-jdbc :as ragtime-jdbc]
             [ragtime.protocols :as ragtime-protocols]
             ;; ragtime's own resource reader: the same listing it loads from, so a file it
@@ -46,16 +47,26 @@
            [java.sql Connection DriverManager PreparedStatement ResultSet SQLException]
            [javax.sql DataSource]))
 
-(def ^:private config-keys #{:jdbc-url :user :password :pool :migrations})
+(def ^:private config-keys #{:jdbc-url :user :password :pool :migrations :sessions})
 
 (def ^:private pool-keys #{:max :timeout-ms})
 
 (def ^:private migrations-keys #{:dir :lock-wait-ms})
 
+(def ^:private sessions-keys #{:lock-wait-ms})
+
 (def ^:private host-migrations-table
   "The host's control table: ragtime's own default, so a host that already used ragtime
   keeps its history (SPEC §7)."
   "ragtime_migrations")
+
+(def ^:private library-migrations-table
+  "This library's own control table, beside the host's and never shared with it (SPEC
+  §8). A single table breaks three ways in silence: a library migration that sorts below
+  ones the host already applied is skipped forever, a tool that checksums applied
+  migrations bricks every host's boot the day this library edits its own, and the host's
+  own reset drops this library's history with it."
+  "db_base_migrations")
 
 (def ^:private lock-table
   "This library's own table, written here and never generated (SPEC §7). It has to exist
@@ -72,10 +83,25 @@
   [dir wait-ms]
   {:table      host-migrations-table
    :source     dir
+   :value      dir
    :blame      [:migrations :dir]
    :wait-blame [:migrations :lock-wait-ms]
    :wait-ms    wait-ms
    :extra      {:dir dir}})
+
+(defn- library-run
+  "How this library's own migration run names itself. Its source is a version of this
+  library rather than a prefix, so a refusal carries no `:value`: nothing the host wrote
+  is at fault, and the key it blames is the one the host wrote to ask for the run at all.
+  The phrase reads after \"not found under\", which is the downgrade case — a database
+  migrated by a newer db-base and then booted by an older one."
+  [wait-ms]
+  {:table      library-migrations-table
+   :source     "the schema this version of db-base ships"
+   :blame      [:sessions]
+   :wait-blame [:sessions :lock-wait-ms]
+   :wait-ms    wait-ms
+   :extra      {}})
 
 (def ^:private lock-poll-ms
   "How finely the wait for the lock is sliced. Nothing depends on it: what a boot waits
@@ -147,11 +173,29 @@
     :else
     (fail! ":migrations must be :none or a map of :dir and :lock-wait-ms" [:migrations] migrations)))
 
+(defn- validate-sessions! [sessions]
+  (cond
+    (= :none sessions) nil
+
+    (map? sessions)
+    (let [{:keys [lock-wait-ms]} sessions]
+      (refuse-unknown-keys! sessions sessions-keys [:sessions])
+      ;; The same bounds as the host's run waits by, and for the same reason: two
+      ;; instances booting at once is the ordinary case, and a lock without a deadline
+      ;; turns it into a hang (SPEC §7).
+      (when-not (integer-between? 0 Integer/MAX_VALUE lock-wait-ms)
+        (fail! (str "[:sessions :lock-wait-ms] must be an integer from 0 to " Integer/MAX_VALUE
+                    " milliseconds")
+               [:sessions :lock-wait-ms] lock-wait-ms)))
+
+    :else
+    (fail! ":sessions must be :none or a map of :lock-wait-ms" [:sessions] sessions)))
+
 (defn- validate! [config]
   (when-not (map? config)
     (throw (ex-info "db-base: configuration must be a map" {:config-key []})))
   (refuse-unknown-keys! config config-keys [])
-  (let [{:keys [jdbc-url user password pool migrations]} config]
+  (let [{:keys [jdbc-url user password pool migrations sessions]} config]
     (when-not (non-blank-string? jdbc-url)
       (fail! ":jdbc-url must be a non-blank string" [:jdbc-url]))
     (when-not (string? user)
@@ -160,7 +204,10 @@
     (when-not (string? password)
       (fail! ":password must be a string (\"\" is a value)" [:password]))
     (validate-pool! pool)
-    (validate-migrations! migrations)))
+    (validate-migrations! migrations)
+    ;; Asked for like everything else and never defaulted: a host says whether it wants
+    ;; the table of §8 or not. `:none` is the opt-out, exactly as it is for :migrations.
+    (validate-sessions! sessions)))
 
 (defn- open-pool ^HikariDataSource [{:keys [jdbc-url user password pool]}]
   (let [{:keys [max timeout-ms]} pool
@@ -216,7 +263,8 @@
 
 (defn- migration-failure [run message id cause]
   (ex-info (str "db-base: " message)
-           (cond-> {:config-key (:blame run) :value (:source run)}
+           (cond-> {:config-key (:blame run)}
+             (contains? run :value) (assoc :value (:value run))
              id (assoc :migration-id id))
            cause))
 
@@ -469,7 +517,8 @@
                                     " not be given back. If it is still there, the repair is: DELETE FROM "
                                     lock-table " WHERE id = '" (:table run) "' AND holder = '"
                                     holder "'")
-                               {:config-key (:blame run) :value (:source run) :holder holder}
+                               (cond-> {:config-key (:blame run) :holder holder}
+                                 (contains? run :value) (assoc :value (:value run)))
                                e))))
         applied))))
 
@@ -504,6 +553,14 @@
     :password    string, \"\" included — never defaulted, never generated
     :pool        {:max integer 1..2147483647 :timeout-ms integer 250..2147483646}
     :migrations  :none, or {:dir classpath-prefix :lock-wait-ms integer 0..2147483647}
+    :sessions    :none, or {:lock-wait-ms integer 0..2147483647}
+
+  `:sessions` asks for the table §8's session store keeps, and its migration runs
+  **before** the host's, into a control table and under a lock row of this library's own,
+  so a host schema may already refer to what it creates. The handle then carries
+  `:session-migrations-applied`, which counts that run and never the host's; with
+  `:sessions :none` nothing is created and the key is absent. A host that never
+  constructs the store has no reason to ask for it.
 
   Migration ids sort as strings, so numbers are zero-padded; a `down` never runs.
 
@@ -536,14 +593,20 @@
                              (.getClassLoader ^Class (class driver)))
       (throw (ex-info "db-base: the JDBC driver that accepts :jdbc-url is not one the pool can use"
                       {:config-key [:jdbc-url] :driver (.getName (class driver))}))))
-  (let [dir    (get-in config [:migrations :dir])
-        run    (when dir (host-run dir (get-in config [:migrations :lock-wait-ms])))
-        source (when dir (load-source run))
-        ds     (open-pool config)]
+  (let [dir     (get-in config [:migrations :dir])
+        run     (when dir (host-run dir (get-in config [:migrations :lock-wait-ms])))
+        source  (when dir (load-source run))
+        ;; Before the host's, and under a lock row of its own: the host's schema may
+        ;; already refer to what this one creates, and the two runs must never be able to
+        ;; wait for each other (SPEC §8).
+        library (when (map? (:sessions config))
+                  (library-run (get-in config [:sessions :lock-wait-ms])))
+        ds      (open-pool config)]
     (try
       (borrow-once! ds (get-in config [:pool :timeout-ms]))
       (cond-> {:datasource ds}
-        source (assoc :migrations-applied (migrate! ds run source)))
+        library (assoc :session-migrations-applied (migrate! ds library schema/migrations))
+        source  (assoc :migrations-applied (migrate! ds run source)))
       (catch Throwable t
         (close-after-failure! ds t)
         (throw t)))))
