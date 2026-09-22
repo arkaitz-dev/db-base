@@ -1,0 +1,52 @@
+;; The whole system, as data. Six components: three the libraries ship and
+;; three this host wrote, and `#ig/ref` is every line of coupling there is.
+;;
+;; Nothing here is a secret, and that is worth noticing rather than assuming.
+;; SQLite needs no password, and the session is a row rather than a sealed
+;; cookie, so this host has no signing key to keep out of the repository. The
+;; day the first line below points at PostgreSQL, the password belongs in a
+;; `*.local.edn` that `.gitignore` already excludes and `#wb/env` reads.
+{:dev.arkaitz.db-base/database
+ ;; The engine is the host's, and swapping it is this one line. WAL and a busy
+ ;; timeout ride in the URL because that is where a driver's own knobs belong —
+ ;; db-base's configuration is deliberately closed to them, and §5 says the URL
+ ;; is the host's business.
+ ;;
+ ;;   :jdbc-url "jdbc:postgresql://localhost:5432/demo_tasks"
+ ;;   :user     "demo"
+ ;;   :password #wb/env "DEMO_TASKS_DB_PASSWORD"
+ ;;
+ {:jdbc-url   "jdbc:sqlite:demo-tasks.db?journal_mode=WAL&busy_timeout=5000"
+  :user       ""
+  :password   ""
+  :pool       {:max 4 :timeout-ms 5000}
+  ;; A classpath prefix, never a path on disk: what a process's working
+  ;; directory happens to be must not decide which schema arrives.
+  :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
+  ;; §8's own table, applied in a run of its own before the host's, so that a
+  ;; host resetting its migrations does not take the library's schema with it.
+  :sessions   {:lock-wait-ms 5000}}
+
+ ;; The ceremony's store and its `deliver!` are code, and code does not live in
+ ;; EDN — so what is data sits here and `demo-tasks.system` builds the rest.
+ :demo-tasks/auth-config {:db       #ig/ref :dev.arkaitz.db-base/database
+                          ;; It has to agree with where the server actually
+                          ;; listens, and nothing enforces that: the link is
+                          ;; printed for a human to follow. `main` keeps the two
+                          ;; in step when a port is given on the command line.
+                          :base-url "http://localhost:3000"
+                          :ttl-ms   900000}
+
+ :dev.arkaitz.auth-base/ceremony #ig/ref :demo-tasks/auth-config
+
+ :demo-tasks/web-config {:db                  #ig/ref :dev.arkaitz.db-base/database
+                         :ceremony            #ig/ref :dev.arkaitz.auth-base/ceremony
+                         :session-lifetime-ms 3600000
+                         ;; The named opt-out for http://localhost — Safari does
+                         ;; not send a Secure cookie there.
+                         :secure?             false}
+
+ :dev.arkaitz.web-base/handler #ig/ref :demo-tasks/web-config
+
+ :dev.arkaitz.web-base/server {:handler #ig/ref :dev.arkaitz.web-base/handler
+                               :port    3000}}

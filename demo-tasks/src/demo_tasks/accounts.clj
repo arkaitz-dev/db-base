@@ -28,6 +28,13 @@
   [db identifier]
   (:subject (one db "SELECT subject FROM account WHERE identifier = ?" identifier)))
 
+(defn identifier-for
+  "The address an account belongs to, for showing somebody who they are signed
+  in as. The subject is what everything else is keyed on; this is the only
+  place the address is read back, and it is presentation rather than identity."
+  [db subject]
+  (:identifier (one db "SELECT identifier FROM account WHERE subject = ?" subject)))
+
 (defn register!
   "The subject for `identifier`, creating the account if it is not there yet.
   Safe to call concurrently for the same address: the UNIQUE index is the
