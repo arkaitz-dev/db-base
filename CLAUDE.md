@@ -17,24 +17,36 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 **Specification settled 2026-09-09. `start` and `stop` written 2026-09-12, `ready?`
 2026-09-13, the migration run 2026-09-19, its lock 2026-09-19, and §3's two-engine
-proof 2026-09-20, and §10's Integrant key the same day.** What §6, §7 and §10 specify is
-written and tested; §8's session store is not. §12's gate is *a consumer that asked* —
-one, not two; two is its **exit** condition, which is a different sentence — and the key
-entered on that basis: the host now being built in this repository serves HTTP through
-web-base, which is wired with Integrant, so the library ships the key rather than making
-that host write it. §8 stays out until the same gate opens for it. Commands go in this file **only once they have actually been run
-and observed to work**, never from convention. Observed:
+proof 2026-09-20, §10's Integrant key the same day, and §8's session store 2026-09-21.**
+Everything the specification asks for is written and tested.
+
+**The second consumer arrived 2026-09-22** and with it §12's exit condition, which is
+the sentence this repository exists to be judged by. It is not met: `demo-tasks/` uses
+§8 for a feature a sealed cookie cannot serve, with a control that proves the
+difference. The verdict is narrower than a vindication and is written out in §12 — read
+it before adding anything, because the case rests on the store's *contract* and not on
+the line count.
+
+Commands go in this file **only once they have actually been run and observed to
+work**, never from convention. Observed:
 
     clojure -M:test                        # whole suite; prints "Ran N tests containing M assertions."
     clojure -M:test -n <namespace>         # one namespace
     clojure -M:test -v <namespace>/<var>   # one test
-    clojure -M:demo [port]                 # the host of §12, serving; the port is optional
-    clojure -M:demo-test                   # the acceptance test of the seam
+    clojure -M:demo [port]                 # the first host, serving; the port is optional
+    clojure -M:demo-test                   # its acceptance test
+    clojure -M:demo-tasks [port]           # the three-library host; the port also moves the link's origin
+    clojure -M:demo-tasks-test             # its acceptance test, with the cookie control
 
-The demo is on `:demo` and `:demo-test` and **must never reach `:test`**:
-`structure_test`'s logging-backend scan reads the running JVM's classpath, and the web
-stack brings logback. Its own docstring says a backend arriving through a test extra
-"reds falsely but visibly, and the fix is to move it, never to filter the scan".
+**Both demos must never reach `:test`**: `structure_test`'s logging-backend scan reads
+the running JVM's classpath, and the web stack brings logback. Its own docstring says a
+backend arriving through a test extra "reds falsely but visibly, and the fix is to move
+it, never to filter the scan". They are four aliases and two directories, and nothing a
+consumer receives changes because either exists.
+
+`demo-tasks` consumes **auth-base from `../auth-base`**, not from Clojars: the Integrant
+key and the `:on-unknown` hook it needs were written for it on 2026-09-22 and are not in
+0.1.0. A `:mvn/version` there would claim a release that has not happened.
 
 `clojure -M:test -e '…'` does **not** evaluate: `:test`'s `:main-opts` hand the arguments
 to the test runner, which reads `-e` as `--exclude` and runs the tests as usual — the form
@@ -120,16 +132,39 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       pool loads neither it nor ring. The demo's session is a row, and an acceptance test
       proves what a cookie cannot do, with a control that boots the SAME host over the
       cookie store and watches the copy still work there.
-- [ ] **§12's gate was satisfied in form and not in substance, and that is recorded
-      rather than fixed** (decided with the user 2026-09-21, written into §12). The demo's
-      own features — naming yourself, ending your session — work under a cookie for an
-      honest client; what needs a row is a thief replaying a copy, which no feature of the
-      host exposes. The store was committed first and the consumer fitted to it
-      afterwards. The feature that WOULD ask — list my sessions, end another by id —
-      cannot be built without the host reading `db_base_sessions`, which §8 says is this
-      library's and not the host's: either db-base grows a listing surface, which §9 is a
-      list of reasons against, or the host reaches in. Open on purpose, for the second
-      consumer to decide.
+- [x] **§12's gate was satisfied in form and not in substance** (recorded with the user
+      2026-09-21) — **closed 2026-09-22 by the second consumer.** `demo-tasks/` lists
+      where somebody is signed in and ends ONE session while the others keep working,
+      with a control that boots the same host over a sealed cookie and asserts the
+      opposite. **And §12's own dichotomy turned out to be false**: that feature needed
+      neither a listing surface here nor the host reading `db_base_sessions`. Ring puts
+      `:session/key` on every request, so the host keeps its own `device` table and ends
+      one through `delete-session`, which is Ring's port. The third door was there all
+      along. Both the old claim and its refutation are in §12 — read them together
+      before re-deciding anything about §8.
+
+- [x] **A host of all three libraries**, 2026-09-22: `demo-tasks/`, a CRUD application
+      with magic-link sign-in over web-base, auth-base and this library. It writes the
+      adapter rule 3 forbids here — auth-base's five-method `Store` over the datasource
+      this library hands out, 48 lines — and its `take-challenge!` is proved single-use
+      by **forcing** an interleaving rather than racing for one: a `DataSource` proxy
+      parks the first caller inside its DELETE while another runs to completion. Two
+      controls make that mean something and both are mutation-tested: a naive store must
+      produce two winners, and the harness must be shown to have suspended somebody.
+
+- [ ] **Two auth-base threads this host opened and did not close**, both needing to be
+      raised there rather than fixed from here:
+      - **A magic link fetched by a corporate link scanner is consumed before the human
+        clicks it.** Redemption is a `GET` (auth-base `handlers.clj`), Outlook Safe Links
+        and similar gateways fetch emailed URLs, and single use does the rest: the person
+        gets "that link no longer works" for a link they never opened. Found only because
+        this is the first magic-link consumer. It may want a POST behind a confirmation
+        page, which is auth-base's design decision and not this repository's.
+      - **The subject a host returns from `:on-unknown` must be `=` to what `subject-for`
+        answers afterwards**, or the session it establishes can never be revoked — the
+        generation is keyed on the frozen value and `revoke!` moves a different one. It
+        is documented in auth-base now, and nothing enforces it; proving a host honours
+        it belongs to that host's tests, and `demo-tasks` does so only implicitly.
 
 - [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
       the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
@@ -156,18 +191,37 @@ Two belong to **web-base**, found by building the demo against it and measured
       every five seconds writes seventeen thousand a day, and §8's rows are reclaimed only
       by a function the operator calls. A route that wants no session has no way to say so.
 
-Three threads belong to **auth-base**, not here, and need raising before that repository
-is touched:
+- [ ] **Its stack has no injection point, and 2026-09-22 makes that a pattern rather
+      than an instance.** Two more measured with `demo-tasks`, both the same shape as the
+      one above: `wrap-subject` runs on **every** route, gated or not, so a page with no
+      identity to paint still pays a `generation` read; and `auth/wrap-revoked` cannot be
+      used at all, because it must sit *inside* the session middleware to see a session
+      and web-base offers no way to put it there. The cost of the second is that a
+      revoked session's row lingers until its expiry instead of being deleted at the next
+      request — invisible with a sealed cookie, which is why no earlier host could have
+      noticed. Three instances now; worth raising there as one finding about the stack.
 
-- [ ] `auth-base/SPEC.md:159` contradicts §8 of this document about who ships the JDBC
-      implementation of its Store port, and still calls this project `base-db`.
+Threads that belong to **auth-base**. Two were closed on 2026-09-22 by building the
+host that needed them; the third is untouched:
+
+- [x] `auth-base/SPEC.md` contradicted §8 about who ships the JDBC implementation of its
+      Store port, and called this project `base-db`. **Both corrected there 2026-09-22**,
+      settled by construction rather than argument: the host writes it, `demo-tasks/` is
+      the first that has, and "a page of code" turned out to be 48 lines plus 81.
 - [ ] auth-base has no ceremony for attaching a second identifier to an existing
       subject — log in by email, later add a phone. Its §15 lists "the second factor",
-      which is a different thing.
-- [ ] With the engine decided (2026-09-20), auth-base's `take-challenge!` can be the one
-      `DELETE … RETURNING` that makes a single-use link atomic, which is the trap listed
-      below as read-then-delete. The adapter belongs there and not here (rule 3), so the
-      action from this side is to raise it, not to write it.
+      which is a different thing. **Still open**, and untouched by 2026-09-22.
+- [x] auth-base's `take-challenge!` as one `DELETE … RETURNING`. **Written and measured
+      2026-09-22** — in the host, as rule 3 requires. `RETURNING` works on SQLite through
+      xerial 3.53.4.0, and single use is proved by *forcing* an interleaving rather than
+      racing for one: a `DataSource` proxy parks the first caller inside its DELETE while
+      another completes. A barrier alone would not have done it — SQLite serialises
+      writers at the file, and a naive store passes that every time on this machine,
+      measured, with the naive store kept as the control that must show two winners.
+
+Two more were opened there in the same work and are recorded above under the second
+consumer: the link scanner that burns a magic link before its recipient clicks it, and
+the obligation that `:on-unknown`'s return must equal what `subject-for` answers after.
 
 Done, recorded so it is not repeated: the upsert trap of §8 was reported upstream at
 `luminus-framework/jdbc-ring-session` issue 25.
@@ -212,9 +266,15 @@ is any code to break.**
   in a `*.local.edn` that the host reads and that never reaches the repository.
 - **A connection per request, decided here.** The transaction boundary is the host's.
   Deciding it here makes every consumer's request handling this library's business.
-- **`take-challenge!` implemented as read-then-delete**, when auth-base's adapter is
-  eventually written. Single use is the whole security of a link that travels by
-  email, and two statements have a window between them.
+- **`take-challenge!` implemented as read-then-delete.** Single use is the whole
+  security of a link that travels by email, and two statements have a window between
+  them. **Written 2026-09-22 in `demo-tasks/`** — in the host, as rule 3 requires — as
+  one `DELETE … RETURNING`, so the delete is what decides and the engine serialises it.
+  The trap survived into the *test* rather than the code: two threads and a barrier are
+  green against the naive version every time on this machine, because SQLite serialises
+  writers at the file. What catches it is **forcing** the interleaving with a
+  `DataSource` proxy that parks the first caller inside its DELETE, plus keeping the
+  naive store as a control that must show two winners.
 - **The session store written as an upsert**, or as update-then-insert-if-zero. Ring
   never asks for one, and re-inserting a row whose update touched nothing resurrects a
   session someone revoked. Ring's own `MemoryStore` upserts, so the reference
@@ -274,12 +334,21 @@ is any code to break.**
   `(:system (ex-data e))` itself, or a boot that failed halfway leaks whatever came
   before the key that threw.
 - **A session in a row puts the database in front of every request.** Once §8's store is
-  wired, a request no longer merely *may* touch the database — it does, twice, because
-  the CSRF token lives in the session. Everything downstream inherits that: a closed pool
-  stops being a degraded mode and becomes a failed request, an anonymous visitor costs a
-  row, and a health check can no longer report what it computes. None of it is visible
-  from reading either library; all of it appeared the moment the two were put together
-  (measured 2026-09-21, pinned in the demo's seam test).
+  wired, a request no longer merely *may* touch the database — it does. Everything
+  downstream inherits that: a closed pool stops being a degraded mode and becomes a
+  failed request, an anonymous visitor costs a row, and a health check can no longer
+  report what it computes. None of it is visible from reading either library; all of it
+  appeared the moment the two were put together (measured 2026-09-21, pinned in the
+  demo's seam test).
+
+  **Corrected 2026-09-22 by the second host:** "it does, twice" described the *anonymous*
+  path — a read that misses and an insert. An authenticated page in steady state is two
+  READS and **zero writes**, because ring-anti-forgery returns the response untouched
+  when the token it would set is the one already there, so nothing reaches
+  `write-session`. `demo-tasks`'s seam test pins the zero by watching the row's expiry,
+  which is computed when a row is written and therefore does not move when none is.
+  Adding auth-base makes the second read a `generation` lookup on every request, gated
+  route or not.
 - **HikariCP keeps the login timeout on `DriverManager`, which the whole JVM shares.** A
   pool's close waits for the login timeout of the last pool constructed, so timing tests
   keep their timeouts within the same whole second.
@@ -310,3 +379,12 @@ SPEC §12 argues that this library may not deserve to exist, and states the cond
 under which it should be deleted: if after a second consumer it is still nothing but
 the wiring of §6 and §7, fold it back into the applications. That paragraph is not
 decoration. Read it before adding anything.
+
+**The second consumer arrived 2026-09-22 and the condition is not met**, which is a
+smaller claim than it sounds and §12 says so at length. §6 and §7 remain wiring anybody
+could write. What two hosts have now shown is that **§8 is a contract at least one real
+feature depends on** — and, separately, that §12 was *wrong* about how that feature
+would have to be built: it insisted on a listing surface here or the host reaching into
+`db_base_sessions`, and there was a third door neither. The refutation is left beside
+the claim on purpose. A falsification section that only records the times it was right
+is not one.

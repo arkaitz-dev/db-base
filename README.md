@@ -9,16 +9,24 @@ with the measurements behind each one; this file is only how to use it.
 
 ## Depending on it
 
-There is no artifact published anywhere. It is a git dependency:
+There is no artifact published anywhere, **and no tag either** — this repository has
+never had one, so the `{:git/tag "v0.1.0"}` these lines used to recommend resolved to
+nothing for anybody who tried it. Corrected 2026-09-22, when the second host consumed
+this library and the instructions were read as instructions rather than as prose.
+
+Until there is a release, depend on a commit:
 
 ```clojure
-io.github.arkaitz-dev/db-base {:git/tag "v0.1.0"}
+io.github.arkaitz-dev/db-base {:git/url "https://github.com/arkaitz-dev/db-base"
+                               :git/sha "<the commit you want>"}
 ```
 
-and let tools.deps fill in the sha, which is the part it verifies:
+or, working on it alongside a host of your own, from disk — which is what
+`demo-tasks/` does with its sibling auth-base, and the honest coordinate while a
+library and its consumer are being written together:
 
-```
-clojure -X:deps git-resolve-tags
+```clojure
+dev.arkaitz/db-base {:local/root "../db-base"}
 ```
 
 A consumer receives a connection pool and a migration runner, and nothing else: no JSON
@@ -134,7 +142,41 @@ They run on H2 and SQLite, embedded, with no infrastructure — deliberately not
 engine this is deployed on, because a suite that ran on that engine would accept every
 mistake shaped like it.
 
-## The host that consumes it
+## The hosts that consume it
+
+There are two, and they prove different things.
+
+### `demo-tasks/` — the three libraries together
+
+A small CRUD application on all of them at once: [web-base](https://clojars.org/dev.arkaitz/web-base)
+serves it, [auth-base](https://clojars.org/dev.arkaitz/auth-base) decides who is asking,
+and this library opens the database and applies the schema before anything answers a
+request. Sign in with a magic link printed to the console — any address works, and the
+account comes into being the first time a link is redeemed — then keep a list of tasks
+nobody else can see.
+
+```
+clojure -M:demo-tasks         # serves on the port config.edn names
+clojure -M:demo-tasks 3141    # or on the one you name; the sign-in link follows it
+clojure -M:demo-tasks-test    # the acceptance test of the three-way join
+```
+
+**It is the host that makes the case for §8's session store**, because it has the one
+feature a sealed cookie cannot serve: a page listing where you are signed in, and a
+button that ends **one** of those sessions while the others keep working. Its test suite
+carries the control — the same host, the same handler, the same routes over a signed
+cookie — which asserts that everything else still works and that this one call cannot
+end anything.
+
+It writes the adapter this library is not allowed to contain: auth-base's `Store` port,
+five methods over the datasource db-base handed it. 48 lines, which is what "a page of
+code" turns out to mean.
+
+It consumes auth-base from `../auth-base` rather than from Clojars, because the
+Integrant key and the registration hook it needs were written for it and are not in
+0.1.0 yet. That is a coordinate you would change; it is not a pattern to copy.
+
+### `demo/` — this library and web-base, alone
 
 `demo/` is a small web application that serves pages with
 [web-base](https://clojars.org/dev.arkaitz/web-base) and opens its database with this
