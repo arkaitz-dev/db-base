@@ -25,18 +25,30 @@
   (doseq [suffix ["" "-journal" "-wal" "-shm"]]
     (.delete (io/file (str path suffix)))))
 
+(def ^:private pragmas
+  "Journal mode and a busy timeout, in the JDBC URL because that is the host's
+  and db-base's configuration surface is closed to driver knobs on purpose.
+
+  **WAL is load-bearing for the interleaving test, not a performance choice.**
+  In SQLite's default rollback journal a reader blocks a writer, so a test that
+  suspends one caller between its statements and runs another to completion
+  deadlocks instead of interleaving — and then the hang guard fires and the
+  deadline has become the oracle, which is the one thing such a test may never
+  do. The busy timeout bounds the wait for the ordinary contention underneath."
+  "?journal_mode=WAL&busy_timeout=5000")
+
 (defn config
   "What this host hands `db-base/start`, over `path` rather than the file its
   own resource names."
   [path]
-  {:jdbc-url   (str "jdbc:sqlite:" path)
+  {:jdbc-url   (str "jdbc:sqlite:" path pragmas)
    :user       ""
    :password   ""
-   :pool       {:max 2 :timeout-ms 5000}
+   :pool       {:max 4 :timeout-ms 5000}
    :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
    :sessions   {:lock-wait-ms 5000}})
 
-(defn datasource [path] (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path)}))
+(defn datasource [path] (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path pragmas)}))
 
 (defn rows
   "Every row of `sql`, as vectors, through a connection of the test's own."
