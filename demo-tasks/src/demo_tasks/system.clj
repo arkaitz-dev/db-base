@@ -48,20 +48,26 @@
    :on-unknown (fn [identifier] (accounts/register! db identifier))})
 
 (defmethod ig/init-key :demo-tasks/web-config [_ {:keys [db ceremony session-lifetime-ms secure?]}]
-  {:routes     (routes/routes db ceremony)
-   :subject-fn (auth/subject-fn ceremony)
-   :login-path "/login"
-   ;; A store, not a key: it has no lifecycle of its own — the pool it borrows
-   ;; from does, and that one is already a component — and db-base's "one key,
-   ;; never two" has to survive being used as much as being specified.
-   ;;
-   ;; `:readers {}` because this session holds nothing tagged — measured in the
-   ;; running host, the row reads `:ab/subject "d4dccdae-…"`, a string with a
-   ;; UUID's spelling. db-base §8's reader surface therefore still has no
-   ;; consumer anywhere, which is worth knowing about that library rather than
-   ;; hiding behind a `{}` that looks like a decision.
-   :session    {:store        (session/store db {:lifetime-ms session-lifetime-ms :readers {}})
-                ;; The cookie's expiry is a courtesy to the browser; the row's is
-                ;; the one that decides, and it is the same number so that the
-                ;; two cannot disagree.
-                :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}}})
+  ;; Built once and handed to two places: to web-base as `:session :store`, and
+  ;; to the routes, which need it to end one session by id. **That is the whole
+  ;; of what db-base §12 said could not be done without a listing surface.** The
+  ;; host constructed the store, so the host holds it; `delete-session` is a
+  ;; function of Ring's port and not a door db-base had to open.
+  (let [store (session/store db {:lifetime-ms session-lifetime-ms :readers {}})]
+    {:routes     (routes/routes db ceremony store)
+     :subject-fn (auth/subject-fn ceremony)
+     :login-path "/login"
+     ;; A store, not a key: it has no lifecycle of its own — the pool it borrows
+     ;; from does, and that one is already a component — and db-base's "one key,
+     ;; never two" has to survive being used as much as being specified.
+     ;;
+     ;; `:readers {}` because this session holds nothing tagged — measured in the
+     ;; running host, the row reads `:ab/subject "d4dccdae-…"`, a string with a
+     ;; UUID's spelling. db-base §8's reader surface therefore still has no
+     ;; consumer anywhere, which is worth knowing about that library rather than
+     ;; hiding behind a `{}` that looks like a decision.
+     :session    {:store        store
+                  ;; The cookie's expiry is a courtesy to the browser; the row's
+                  ;; is the one that decides, and it is the same number so that
+                  ;; the two cannot disagree.
+                  :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}}}))

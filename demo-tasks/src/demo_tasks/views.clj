@@ -79,4 +79,29 @@
     [:button {:type "submit"} "Add"]]
    (if (seq tasks)
      [:ul#tasks (map (partial task-item request) tasks)]
-     [:p [:em "Nothing yet."]])))
+     [:p [:em "Nothing yet."]])
+   [:p [:a {:href "/sessions"} "Where you are signed in"]]))
+
+(defn- device-item [request current {:keys [session_id user_agent first_seen]}]
+  (let [here? (= session_id current)]
+    [:li {:class (when here? "current")}
+     [:code (subs session_id 0 8)] " · " [:span.agent user_agent]
+     " · since " first_seen
+     (when here? " · this one")
+     " "
+     [:form {:method "post" :action (str "/sessions/" session_id "/end") :style "display:inline"}
+      (security/csrf-field request)
+      [:button {:type "submit"} (if here? "End this one" "End it")]]]))
+
+(defn sessions-page
+  "The one page in this application a sealed cookie could not serve. Logging out
+  ends the session in front of you and revoking ends all of them; ending *one*
+  of several needs the session to be a row somebody else can delete."
+  [request devices current]
+  (list
+   [:h2 "Where you are signed in"]
+   [:p "Each of these is a session this host has seen you arrive on. Ending one "
+    "leaves the others working — which is only possible because the session is a "
+    "row in the database rather than a sealed value in your browser."]
+   [:ul#sessions (map (partial device-item request current) devices)]
+   [:p [:a {:href "/"} "Back to your tasks"]]))

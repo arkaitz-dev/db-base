@@ -7,23 +7,55 @@
   layout beside its own routes. Neither library knows the other exists; this
   vector is the whole of the meeting."
   (:require [demo-tasks.accounts :as accounts]
+            [demo-tasks.devices :as devices]
             [demo-tasks.tasks :as tasks]
             [demo-tasks.views :as views]
             [dev.arkaitz.auth-base :as auth]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
-            [dev.arkaitz.web-base.response :as response]))
+            [dev.arkaitz.web-base.response :as response]
+            [ring.middleware.session.store :as session-store]))
 
 (defn- home
   "The list, for whoever is asking. `:wb/subject` is web-base's, and it holds
   whatever this host's `subject-fn` answered — which is auth-base's, which is
   the subject db-base's tables hold. Three libraries in one line, and none of
-  them named each other to get here."
+  them named each other to get here.
+
+  It also notes the session this request arrived on. Here rather than at login,
+  because at the login request `:session/key` still names the session being
+  replaced: Ring mints the new one inside `write-session` and hands it to the
+  response, never to the handler."
   [db request]
   (let [subject (:wb/subject request)]
+    (devices/seen! db subject (:session/key request) (get-in request [:headers "user-agent"]))
     (response/ok (views/tasks-page request
                                    (accounts/identifier-for db subject)
                                    (tasks/list-tasks db subject)))))
+
+(defn- sessions
+  "Everywhere this person is signed in. The current one is marked, which is the
+  only thing that makes the list actionable — ending one you are not looking
+  through is the whole feature."
+  [db request]
+  (response/ok (views/sessions-page request
+                                    (devices/list-devices db (:wb/subject request))
+                                    (:session/key request))))
+
+(defn- end-session
+  "Ends one session of this subject's and leaves the others alone.
+
+  Ownership decides first: `forget!` carries the subject in its WHERE clause, so
+  a session id that is not this person's changes no row and the store is never
+  asked. Only then is the session itself deleted — through `delete-session`, a
+  function of Ring's port, on the store this host built itself. db-base is not
+  asked to list anything and `db_base_sessions` is never read."
+  [db store request]
+  (let [subject    (:wb/subject request)
+        session-id (get-in request [:path-params :id])]
+    (when (= 1 (devices/forget! db subject session-id))
+      (session-store/delete-session store session-id))
+    (response/see-other "/sessions")))
 
 (defn- add [db request]
   (tasks/add-task! db (:wb/subject request) (get-in request [:params "body"]))
@@ -65,9 +97,13 @@
   "The routes only a signed-in person reaches. `:wb/gate` is route data rather
   than middleware, so the guard is visible beside the route it guards instead
   of being somewhere up a stack."
-  [db ceremony]
+  [db ceremony store]
   [["/" {:wb/gate wb/subject-present?
          :get {:handler (partial home db)}}]
+   ["/sessions" {:wb/gate wb/subject-present?
+                 :get {:handler (partial sessions db)}}]
+   ["/sessions/:id/end" {:wb/gate wb/subject-present?
+                         :post {:handler (partial end-session db store)}}]
    ["/tasks" {:wb/gate wb/subject-present?
               :post {:handler (partial add db)}}]
    ["/tasks/:id" {:wb/gate wb/subject-present?
@@ -82,7 +118,7 @@
 (defn routes
   "auth-base's four routes and this host's six, under one layout — plus
   `/health`, outside it, because a probe wants a status line and not a page."
-  [db ceremony]
+  [db ceremony store]
   [["" {:wb/layouts [views/shell-layout]}
     (into (auth/routes ceremony {:view         views/login
                                  :login-path   "/login"
@@ -95,5 +131,5 @@
                                  ;; would let anyone lock a known user out of
                                  ;; their own login by spending their allowance.
                                  :rate-limit   {:limit 5 :window-ms (* 15 60 1000)}})
-          (owned db ceremony))]
+          (owned db ceremony store))]
    ["/health" {:get {:handler (partial health db)}}]])

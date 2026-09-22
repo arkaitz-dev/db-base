@@ -9,22 +9,22 @@
             [dev.arkaitz.db-base :as db])
   (:import [clojure.lang ExceptionInfo]))
 
-(deftest the-hosts-four-tables-and-the-librarys-own-arrive-on-the-first-boot-and-neither-run-repeats
+(deftest the-hosts-tables-and-the-librarys-own-arrive-on-the-first-boot-and-neither-run-repeats
   (let [path (temp-db-path)]
     (try
       (let [first-boot (db/start (config path))]
-        (is (= 4 (:migrations-applied first-boot))
-            "the host's four migrations were found under its classpath prefix and applied")
+        (is (= 5 (:migrations-applied first-boot))
+            "the host's five migrations were found under its classpath prefix and applied")
         (is (= 1 (:session-migrations-applied first-boot))
             (str "and this library's own ran too, counted apart — a handle that added the two"
-                 " would say 5 here, and a host reporting its own schema would be wrong"))
+                 " would say 6 here, and a host reporting its own schema would be wrong"))
         (db/stop first-boot))
       (is (= [["account"] ["account_generation"] ["db_base_migration_lock"] ["db_base_migrations"]
-              ["db_base_sessions"] ["login_challenge"] ["ragtime_migrations"] ["task"]]
+              ["db_base_sessions"] ["device"] ["login_challenge"] ["ragtime_migrations"] ["task"]]
              (rows path "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"))
           "every table, the host's beside the library's, each run recorded in a control table of its own")
       (is (= [[["001-sessions"]]
-              [["001-accounts"] ["002-generations"] ["003-challenges"] ["004-tasks"]]]
+              [["001-accounts"] ["002-generations"] ["003-challenges"] ["004-tasks"] ["005-devices"]]]
              [(rows path "SELECT id FROM db_base_migrations ORDER BY id")
               (rows path "SELECT id FROM ragtime_migrations ORDER BY id")])
           (str "recorded apart, which is what makes a host's own reset survivable: the library's"
