@@ -626,14 +626,30 @@ shape.
 
 **auth-base's store is a different case and does not ship here.** Its protocol is ours,
 and the adapter is a page of code the host writes over a datasource this library
-already gave it:
+already gave it. **Written for real on 2026-09-22 by `demo-tasks`**, which corrected
+this paragraph in two ways it had been wrong about since it was drafted from memory:
+the protocol lives in `dev.arkaitz.auth-base.store` and not in the `auth-base` façade,
+and it is **five** methods rather than one.
 
 ```clojure
-(defrecord JdbcStore [ds]
-  auth/Store
-  (take-challenge! [_ token] …)   ; one statement, returning and deleting atomically
-  …)
+(defrecord JdbcStore [db]
+  store/Store
+  (put-challenge!   [this token identifier expires-at] …) ; refuses a bad expiry BEFORE writing
+  (take-challenge!  [_ token] …)                          ; one statement; the DELETE decides
+  (subject-for      [_ identifier] …)                     ; and must never create
+  (generation       [_ subject] …)                        ; 0 for a subject nobody has seen
+  (bump-generation! [_ subject] …))                       ; works with no account row
 ```
+
+Measured, so the phrase "a page of code" stops being a guess: **48 lines in the store
+and 81 in the account namespace it delegates to**, most of them comments about why.
+
+Two of those methods are the mirror image of §8 below and are worth reading beside it.
+`take-challenge!` must never hand one row to two callers, which is the same shape as
+this section's refusal to upsert; and `bump-generation!` must **create** on zero rows
+updated, where §8's store must do **nothing** — the same statement, opposite correct
+answers, because there a missing row means somebody revoked it and here it means
+nobody ever has.
 
 That page belongs where the protocol is, or in the application. It does not justify
 binding two of our libraries to each other's version numbers.
@@ -766,8 +782,9 @@ into the applications and deleted. web-base §7's rule points the same way from 
 other side: when in doubt, leave it in the consumer, because moving code *into* a
 library later is cheap and getting it back out is not.
 
-**As of 2026-09-21 it has one consumer**, and the exit condition needs two, so nothing
-below closes this section. Until 2026-09-20 it had none at all — that was the sentence
+**As of 2026-09-22 it has two consumers**, which is what the exit condition asks for;
+the verdict is at the end of this section and the two paragraphs between are the record
+of how it was reached. Until 2026-09-20 it had none at all — that was the sentence
 to read before adding anything to §10's *In* list, and it is why §10's Integrant key
 waited until a host asked. **Nothing enters the scope without a consumer that asked for
 it**, and web-base §7 still says what happens to a base built before there are two: it
@@ -813,6 +830,12 @@ not a licence to add code in passing.
     §9 is a list of reasons not to, or the host reaches into it. That is a decision, and
     it is not taken here.
 
+    ⚠ **Refuted 2026-09-22 by the second consumer, and left standing because being
+    wrong in public is the point of this section.** There was a third door: Ring puts
+    `:session/key` on every request, so a host keeps its own table of session ids and
+    ends one through `delete-session`, which is Ring's port and not a surface this
+    library had to grow. See *The second consumer* below.
+
   So the honest entry is: **§8 is code nobody has needed yet**, written under a gate that
   was satisfied in form and not in substance, and recorded that way (with the user,
   2026-09-21) rather than dressed up. The second consumer is what decides, and until then
@@ -835,6 +858,62 @@ not a licence to add code in passing.
   a host that logs the exception Integrant threw rather than its cause prints the
   password. Measured 2026-09-21 and pinned in the seam test, so the next person meets it
   as an assertion instead of as an incident.
+
+### The second consumer, 2026-09-22
+
+**`demo-tasks/` is the second host**, and the first that uses all three of these
+libraries at once: web-base serves it, auth-base decides who is asking, and this one
+opens the database and applies the schema before anything answers. A small CRUD
+application — per-person tasks — with magic-link sign-in and an account created on first
+redemption.
+
+**The exit condition is not met, and here is the whole of why.** After two consumers
+this library is §6, §7 and §8, and §8 is no longer "code nobody has needed yet".
+
+- **§8's gate is open, in substance this time.** This host lists where somebody is
+  signed in and ends **one** of those sessions while the others keep working. Two
+  browsers, one person: the first ends the second's session, and the second is anonymous
+  at its next request while the first still serves. A control boots the **same host, the
+  same handler and the same routes** over a sealed cookie and asserts the opposite —
+  everything else still works and that one call cannot end anything, because
+  `delete-session` on a cookie can only hand back a fresh empty one. That control is
+  itself mutation-tested: make it secretly use the row store and it reds.
+- **And the dichotomy this section stated was false.** It said that feature needed
+  either a listing surface here — §9 is a list of reasons against — or the host reaching
+  into `db_base_sessions`. **Neither happened.** Ring puts `:session/key` on every
+  request, so the host learns its own session's id without reading anybody's table,
+  keeps it in a `device` table of its own, and ends one by handing the id back to the
+  store it constructed itself. No db-base code was added. The third door was there all
+  along and this section did not see it.
+- **The cost of that door, so it is not sold as free.** The host's table has no foreign
+  key to `db_base_sessions` — that one is this library's and may be migrated — and this
+  library deletes session rows on expiry, on rotation and on `reclaim-expired!` without
+  telling anyone. So the host's list is what it last saw rather than what the library
+  holds, and ending a device the library has already forgotten is harmless. Bounded
+  staleness, in exchange for a boundary neither side has to cross.
+- **Revocation is NOT evidence, and the control is what proves it.** "Log out
+  everywhere" works identically over a sealed cookie, because auth-base moves a
+  generation on the subject rather than enumerating sessions. A demo that shipped only
+  that would have looked like a §8 consumer and been none. This is the shape the
+  2026-09-21 panel caught the first time, and the control exists so that it cannot be
+  made twice.
+- **What was still asked of this library: nothing.** Six candidates were judged against
+  §9 and all six declined — a listing surface, a subject column on `db_base_sessions`, a
+  transaction helper, query helpers, a challenge sweeper, and pool or driver knobs, the
+  last resolved by the JDBC URL, which §5 already says is the host's. The near-miss
+  worth recording for a third consumer is **multiple migration prefixes**: this is the
+  first host with three logical schemas in one directory, §9 does not forbid it, and
+  numbering them `001`…`005` in one prefix was enough.
+
+**So the argument is narrower than "the library is justified", and that is the honest
+claim.** What two consumers have now shown is that §6 and §7 are wiring anybody could
+write, and that §8 is a contract at least one real feature depends on. The case rests
+where it always did: on the contract, not on the line count.
+
+**One thing this host does NOT prove, recorded so nobody assumes it.** §8's `:readers`
+surface still has no consumer anywhere. This host's subject is a UUID's *spelling* and
+not a `java.util.UUID`, measured in the running application, so nothing tagged has ever
+gone through that round trip.
 
 **And a second thing would falsify the case in favour, earlier than the exit
 condition.** The argument above is that the decisions are the value. If, once the pool
