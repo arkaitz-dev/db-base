@@ -4,37 +4,10 @@
   goes through web-base or Integrant: at this point the host is four SQL files
   and a claim that db-base will find them, and a test that needed the whole
   system to say so would be testing the wrong thing."
-  (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
-            [dev.arkaitz.db-base :as db]
-            [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs])
+  (:require [clojure.test :refer [deftest is]]
+            [demo-tasks.support :refer [config delete-db! rows temp-db-path]]
+            [dev.arkaitz.db-base :as db])
   (:import [clojure.lang ExceptionInfo]))
-
-(defn- temp-db-path []
-  (let [file (java.io.File/createTempFile "demo-tasks-schema-" ".db")]
-    (.delete file)
-    (.deleteOnExit file)
-    (.getAbsolutePath file)))
-
-(defn- delete-db!
-  "The file and the three siblings SQLite may leave beside it, each named in
-  full: a cleanup written as a pattern can remove something it was not shown."
-  [path]
-  (doseq [suffix ["" "-journal" "-wal" "-shm"]]
-    (.delete (io/file (str path suffix)))))
-
-(defn- config [path]
-  {:jdbc-url   (str "jdbc:sqlite:" path)
-   :user       ""
-   :password   ""
-   :pool       {:max 2 :timeout-ms 5000}
-   :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
-   :sessions   {:lock-wait-ms 5000}})
-
-(defn- rows [path sql]
-  (vec (rest (jdbc/execute! (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path)})
-                            [sql] {:builder-fn rs/as-arrays}))))
 
 (deftest the-hosts-four-tables-and-the-librarys-own-arrive-on-the-first-boot-and-neither-run-repeats
   (let [path (temp-db-path)]
