@@ -8,9 +8,14 @@
   datasource of the test's own, so what it observes is what another process
   would see."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [dev.arkaitz.db-base :as db]
+            [dev.arkaitz.web-base.integrant :as wbi]
+            [dev.arkaitz.web-base.testing :as wt]
+            [integrant.core :as ig]
             [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs]))
+            [next.jdbc.result-set :as rs]
+            [ring.mock.request :as mock]))
 
 (defn temp-db-path []
   (let [file (java.io.File/createTempFile "demo-tasks-" ".db")]
@@ -72,3 +77,99 @@
   "`(with-db [db path] …)` — the boot, the teardown and the temporary file."
   [[db path] & body]
   `(with-db* (fn [~db ~path] ~@body)))
+
+;; --- the host, and a browser to drive it ----------------------------------
+
+(def session-lifetime-ms
+  "Overridden in every boot with a number that appears nowhere else, so a host
+  that ignored `:session-lifetime-ms` and wired a literal could not agree with
+  a test by coincidence."
+  777000)
+
+(defn host-config
+  "The host's own `config.edn`, over `path` instead of the file it names."
+  [path]
+  (-> (wbi/read-string (slurp (io/resource "config.edn")))
+      (assoc-in [:dev.arkaitz.db-base/database :jdbc-url]
+                (str "jdbc:sqlite:" path "?journal_mode=WAL&busy_timeout=5000"))
+      (assoc-in [:demo-tasks/web-config :session-lifetime-ms] session-lifetime-ms)))
+
+(defn browser
+  "A cookie jar and the last page, which together are what a browser is.
+
+  It **accumulates**: `wt/with-cookies` merges one response's cookies into a
+  request that already carries some, and every request here is built fresh, so
+  chaining from the previous response alone would send only whatever that one
+  response happened to set — and the session cookie, set once at login, would be
+  dropped by the next page that set none. Measured the hard way: every test past
+  the login looked gated."
+  []
+  (atom {:cookies {} :last nil}))
+
+(defn- keep-cookies
+  "The jar after a response: a cookie set again replaces the old value, and one
+  the response deletes — which `wt/cookies` reports as nil — is forgotten."
+  [cookies set-by-response]
+  (reduce (fn [acc [name value]] (if (nil? value) (dissoc acc name) (assoc acc name value)))
+          cookies set-by-response))
+
+(defn- send! [app jar request]
+  (let [{:keys [cookies]} @jar
+        request  (cond-> request
+                   (seq cookies) (mock/header "cookie"
+                                              (str/join "; " (for [[k v] cookies] (str k "=" v)))))
+        response (app request)]
+    (swap! jar (fn [j] {:cookies (keep-cookies (:cookies j) (wt/cookies response))
+                        :last    response}))
+    response))
+
+(defn GET [app jar path] (send! app jar (mock/request :get path)))
+
+(defn POST
+  "A form submission carrying the CSRF token of whatever page this browser is
+  looking at — what a real form does, and what makes a missing token a failure
+  of the host rather than of the test."
+  [app jar path params]
+  (send! app jar (mock/request :post path
+                               (assoc params "__anti-forgery-token"
+                                      (wt/csrf-token (:last @jar))))))
+
+(defn location [response] (get-in response [:headers "Location"]))
+
+(defn session-key-of
+  "The session cookie this browser holds — from the jar and not from the last
+  response, because the last response usually sets no cookie at all."
+  [jar]
+  (get (:cookies @jar) "ring-session"))
+
+(defn challenge-token
+  "The token of the challenge just issued, read from the table through the
+  test's own connection rather than scraped from the console."
+  [path]
+  (one path "SELECT token FROM login_challenge ORDER BY expires_at DESC, token"))
+
+(defn sign-in!
+  "The whole ceremony as a browser walks it: ask for a link, take the token the
+  host stored, follow it, and land on the page that follows."
+  [app path jar identifier]
+  (GET app jar "/login")
+  (POST app jar "/login" {"identifier" identifier})
+  (let [token (challenge-token path)]
+    (GET app jar (str "/login/redeem/" token))
+    (GET app jar "/")
+    token))
+
+(defn with-host*
+  "The whole system up over a temporary database, and down however it ends."
+  [f]
+  (let [path (temp-db-path)]
+    (try
+      (let [system (ig/init (host-config path) [:dev.arkaitz.web-base/handler])]
+        (try (f (get system :dev.arkaitz.web-base/handler) path)
+             (finally (ig/halt! system))))
+      (finally (delete-db! path)))))
+
+(defmacro with-host
+  "`(with-host [app path] …)`"
+  [[app path] & body]
+  `(with-host* (fn [~app ~path] ~@body)))
