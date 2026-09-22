@@ -127,6 +127,47 @@
         (is (= [] (support/rows path "SELECT session_id FROM device WHERE session_id = ?" other))
             "and so is the host's record of it, or the list would show a session nobody can use")))))
 
+(deftest logging-out-forgets-this-device-and-leaves-the-others
+  ;; Found by using the running application rather than by reading it: the first
+  ;; person to log out left a `device` row naming a session db-base had already
+  ;; deleted, so the next visit would have listed a place they were not signed
+  ;; in. Harmless to end and confusing to read, which is a poor advertisement
+  ;; for the one feature a server-side session is here for.
+  (with-host [app path]
+    (let [here (browser) there (browser)]
+      (sign-in! app path here "ada@example.test")
+      (sign-in! app path there "ada@example.test")
+      (let [leaving (session-key-of here)
+              staying (session-key-of there)]
+        (is (= 2 (count (support/rows path "SELECT session_id FROM device")))
+            "precondition: two devices, or the disappearance below proves nothing")
+        (POST app here "/logout" {})
+        (is (= [] (support/rows path "SELECT session_id FROM device WHERE session_id = ?" leaving))
+            "the device that logged out is forgotten")
+        (is (= [] (support/rows path "SELECT id FROM db_base_sessions WHERE id = ?" leaving))
+            "and so is its session, which is db-base's half of the same act")
+        (is (= [[staying]] (support/rows path "SELECT session_id FROM device"))
+            (str "while the other device is untouched — a logout that forgot everything would"
+                 " be as wrong as one that forgot nothing"))
+        (is (= 200 (:status (GET app there "/")))
+            "and that other browser is still signed in")))))
+
+(deftest revoking-forgets-every-device-of-that-subject-and-nobody-elses
+  (with-host [app path]
+    (let [ada-here (browser) ada-there (browser) bob (browser)]
+      (sign-in! app path ada-here "ada@example.test")
+      (sign-in! app path ada-there "ada@example.test")
+      (sign-in! app path bob "bob@example.test")
+      (is (= 3 (count (support/rows path "SELECT session_id FROM device")))
+          "precondition: three devices across two people")
+      (let [bobs (session-key-of bob)]
+        (POST app ada-here "/revoke" {})
+        (is (= [[bobs]] (support/rows path "SELECT session_id FROM device"))
+            (str "ada's two are forgotten and bob's is not — revocation ends every session of"
+                 " ONE subject, and the host's records follow exactly that line"))
+        (is (= 200 (:status (GET app bob "/")))
+            "and bob is still signed in, which is what says the delete carried an owner")))))
+
 (deftest a-session-id-that-is-not-yours-ends-nothing
   (with-host [app path]
     (let [ada (browser) bob (browser)]

@@ -66,3 +66,13 @@
                                   session-id subject])
               vals first)
       0))
+
+(defn forget-all!
+  "Removes every record of `subject`'s devices, and answers how many there were.
+  What a revocation needs: it ends every session of theirs at once, so leaving
+  the rows behind would show somebody a list of places they are signed in when
+  they are signed in nowhere."
+  [db subject]
+  (or (some-> (jdbc/execute-one! (ds db) ["DELETE FROM device WHERE subject = ?" subject])
+              vals first)
+      0))

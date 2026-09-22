@@ -11,11 +11,20 @@
 --
 -- No foreign key to `db_base_sessions`, deliberately. That table is the
 -- library's and it reserves the right to migrate it; a reference from here would
--- weld this host's schema to a shape neither library agreed to share. The cost
--- is real and bounded: db-base deletes session rows on expiry, on rotation and
--- on `reclaim-expired!` without telling anyone, so a row here can outlive the
--- session it names. The list is therefore what this host last saw, not what the
--- library currently holds, and ending a device it no longer has is harmless.
+-- weld this host's schema to a shape neither library agreed to share.
+--
+-- The cost of having no foreign key is that nothing cascades, so this host has
+-- to keep its own records in step by hand. It does, on **both paths a person
+-- controls**: logging out forgets this device, and revoking forgets all of
+-- them. What remains — and it is now the only stale case — is a session that
+-- simply **expires**, or one an operator reclaims: db-base deletes those rows
+-- without telling anybody, and this table cannot know. So the list is what this
+-- host last saw rather than what the library currently holds, and ending a
+-- device the library has already forgotten is harmless.
+--
+-- That narrowing was not designed, it was observed: the first person to use the
+-- running application logged out, and the next look at the database showed a
+-- device naming a session that no longer existed.
 CREATE TABLE device (session_id VARCHAR(36) NOT NULL PRIMARY KEY,
                      subject VARCHAR(36) NOT NULL,
                      user_agent VARCHAR(200) NOT NULL,

@@ -78,10 +78,14 @@
 (defn- revoke
   "Ends every session this subject has, anywhere. auth-base does it by moving a
   generation on the subject rather than by enumerating sessions — which is why
-  it works over any store, the sealed cookie included."
-  [ceremony request]
+  it works over any store, the sealed cookie included.
+
+  The host's own records go in the same act. Leaving them would show somebody a
+  list of places they are signed in when they are signed in nowhere."
+  [db ceremony request]
   (when-let [subject (:wb/subject request)]
-    (auth/revoke! ceremony subject))
+    (auth/revoke! ceremony subject)
+    (devices/forget-all! db subject))
   (response/see-other "/login"))
 
 (defn- health
@@ -113,23 +117,49 @@
    ["/tasks/:id/delete" {:wb/gate wb/subject-present?
                          :post {:handler (partial remove-task db)}}]
    ["/revoke" {:wb/gate wb/subject-present?
-               :post {:handler (partial revoke ceremony)}}]])
+               :post {:handler (partial revoke db ceremony)}}]])
+
+(defn- auth-routes
+  "auth-base's own four routes, with its logout wrapped so that this host forgets
+  its record of the device in the same act.
+
+  `auth/routes` would hand back exactly this vector; building it from
+  `auth/handlers` is what makes room for the wrapper, and the shape is copied
+  from that function so the two cannot drift apart without this comment being
+  wrong. The wrapper runs BEFORE the logout, because it needs `:session/key` —
+  which names the session about to be deleted — and `:wb/subject`, which the
+  response is about to take away.
+
+  **Why it is worth the extra six lines.** Without it, logging out deletes the
+  session row and leaves this host's record of it behind, so the next visit
+  lists a device that names nothing. Harmless to end, confusing to read, and a
+  poor advertisement for the one feature that justifies a server-side session."
+  [db ceremony opts]
+  (let [{:keys [paths form issue redeem logout]} (auth/handlers ceremony opts)]
+    [[(:login paths)  {:get {:handler form} :post {:handler issue}}]
+     [(:redeem paths) {:get {:handler redeem}}]
+     [(:logout paths) {:post {:handler (fn [request]
+                                         (devices/forget! db
+                                                          (:wb/subject request)
+                                                          (:session/key request))
+                                         (logout request))}}]]))
 
 (defn routes
   "auth-base's four routes and this host's six, under one layout — plus
   `/health`, outside it, because a probe wants a status line and not a page."
   [db ceremony store]
   [["" {:wb/layouts [views/shell-layout]}
-    (into (auth/routes ceremony {:view         views/login
-                                 :login-path   "/login"
-                                 :logout-path  "/logout"
-                                 :after-login  "/"
-                                 :after-logout "/login"
-                                 ;; Keyed by source and never by address: a limit
-                                 ;; counted per address would answer differently
-                                 ;; for one somebody had just asked about, and
-                                 ;; would let anyone lock a known user out of
-                                 ;; their own login by spending their allowance.
-                                 :rate-limit   {:limit 5 :window-ms (* 15 60 1000)}})
+    (into (auth-routes db ceremony {:view         views/login
+                                    :login-path   "/login"
+                                    :logout-path  "/logout"
+                                    :after-login  "/"
+                                    :after-logout "/login"
+                                    ;; Keyed by source and never by address: a
+                                    ;; limit counted per address would answer
+                                    ;; differently for one somebody had just
+                                    ;; asked about, and would let anyone lock a
+                                    ;; known user out of their own login by
+                                    ;; spending their allowance.
+                                    :rate-limit {:limit 5 :window-ms (* 15 60 1000)}})
           (owned db ceremony store))]
    ["/health" {:get {:handler (partial health db)}}]])
