@@ -1070,6 +1070,9 @@
                                         ready? "SPEC §6: a readiness check"}
     ;; Methods on Integrant's multimethods only, which define no var (SPEC §10).
     dev.arkaitz.db-base.integrant      {}
+    ;; 2026-09-25. Two thunks and no SQL, so §9's query builder cannot grow from it; a
+    ;; second var here is an amendment of SPEC §10 first.
+    dev.arkaitz.db-base.collision      {arbitrate! "SPEC §10: a refused write answered by a look, never by SQLSTATE"}
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
                                         reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
     dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"
