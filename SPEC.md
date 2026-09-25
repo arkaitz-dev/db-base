@@ -690,6 +690,12 @@ implementations of published third-party ports whose tables are its own. Since
   rather than raced for. Nothing that touches a file (§5 has no exemption, and a
   temporary database is a file), and no race orchestrator, because the three places that
   park orchestrate three different ways.
+- **`dev.arkaitz.db-base/pool-stats`** (amended later the same day, from the review of
+  whether this library is ready for production) — the pool's load as HikariCP counts it,
+  `{:active :idle :total :waiting}`. Without it the pool was unobservable unless the host
+  cast `:datasource` to a HikariCP class the handle never promised. It reads four
+  counters and registers nothing: JMX stays the host's. A stopped pool is refused rather
+  than reported, because its zeros read as idle.
 
 **Out**: everything in §9, the engine, the schema, the SQL, and the driver. **A function
 here that accepts a statement from the host is §9's first entry, whatever it is

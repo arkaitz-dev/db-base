@@ -1067,7 +1067,11 @@
   the first two additions it exists to make visible."
   '{dev.arkaitz.db-base                {start  "SPEC §6: the pool opened and migrated before anything serves"
                                         stop   "SPEC §6: the pool closed"
-                                        ready? "SPEC §6: a readiness check"}
+                                        ready? "SPEC §6: a readiness check"
+                                        ;; 2026-09-25, SPEC §10 amendment: HikariCP's
+                                        ;; counters, so the pool is observable without
+                                        ;; the handle promising HikariCP.
+                                        pool-stats "SPEC §6: the pool's load, for a host's metrics"}
     ;; Methods on Integrant's multimethods only, which define no var (SPEC §10).
     dev.arkaitz.db-base.integrant      {}
     ;; 2026-09-25. Two thunks and no SQL, so §9's query builder cannot grow from it; a

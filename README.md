@@ -52,6 +52,7 @@ and a new arrival on it is a decision recorded with its reason.
 (:datasource handle)         ; a javax.sql.DataSource for next.jdbc, or whatever you use
 (:migrations-applied handle) ; how many ran during this boot
 (db/ready? handle 2)         ; does the database answer, within 2 seconds
+(db/pool-stats handle)       ; {:active 1 :idle 9 :total 10 :waiting 0}, for your metrics
 (db/stop handle)             ; closes the pool, returns nil
 ```
 

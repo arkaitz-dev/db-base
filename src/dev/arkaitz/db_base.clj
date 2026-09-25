@@ -670,3 +670,29 @@
       ;; A closed pool, a borrow that timed out and a driver's refusal all mean the
       ;; database did not answer. An Error is not an answer, so it is not caught.
       (catch Exception _ false))))
+
+(defn pool-stats
+  "The pool's load at this moment, as `{:active :idle :total :waiting}`: connections
+  lent out, connections idle in the pool, the two together, and threads waiting for one
+  — for a host's metrics, or for telling an exhausted pool from a slow database.
+
+  HikariCP fills the pool in the background up to `[:pool :max]`, so `:total` grows
+  after `start` with nothing borrowed. The numbers are HikariCP's own; this library
+  registers no JMX bean, which stays the host's to decide.
+
+  Throws `ex-info` under `:config-key [:datasource]`, before reading anything, for a
+  handle whose `:datasource` is not the pool `start` opened, and for one `stop` has
+  closed: a closed pool answers zeros, which a dashboard would read as an idle one."
+  [handle]
+  (let [datasource (:datasource handle)]
+    ;; Never echoed, as in `ready?`: a mis-wired caller may pass the configuration map.
+    (when-not (instance? HikariDataSource datasource)
+      (fail! "pool-stats takes the handle start returned, whose :datasource is the pool it opened"
+             [:datasource]))
+    (when (.isClosed ^HikariDataSource datasource)
+      (fail! "pool-stats: the pool has been stopped" [:datasource]))
+    (let [bean (.getHikariPoolMXBean ^HikariDataSource datasource)]
+      {:active  (.getActiveConnections bean)
+       :idle    (.getIdleConnections bean)
+       :total   (.getTotalConnections bean)
+       :waiting (.getThreadsAwaitingConnection bean)})))
