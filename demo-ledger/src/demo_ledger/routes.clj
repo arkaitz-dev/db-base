@@ -1,11 +1,11 @@
 (ns demo-ledger.routes
   "Where the three libraries meet: auth-base's routes, this host's, one layout."
   (:require [clojure.string :as str]
-            [demo-ledger.accounts :as accounts]
             [demo-ledger.ledger :as ledger]
             [demo-ledger.money :as money]
             [demo-ledger.views :as views]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.error :as error]
@@ -26,7 +26,7 @@
 
 (defn- home [db request]
   (let [s (subject request)
-        identifier (accounts/identifier-for db s)]
+        identifier (auth-jdbc/identifier-for (:datasource db) s)]
     (response/ok (views/home request identifier (ledger/groups-of db s)
                              (ledger/invitations-for db identifier)))))
 
@@ -43,7 +43,7 @@
                                      (ledger/members db s id)
                                      (ledger/expenses db s id)
                                      (ledger/balances db s id)
-                                     (get-in request [:params "error"])))
+                                     (:wb/form request)))
       (not-found!))))
 
 (defn- add-expense [db request]
@@ -51,7 +51,12 @@
         description (param request "description")
         cents       (money/parse-cents (param request "amount"))]
     (cond
-      (not (and description cents)) (response/see-other (str "/groups/" id "?error=amount"))
+      ;; The group's own page again, with what was typed and why it was refused —
+      ;; a 422 at this URL, where a redirect would have lost the values.
+      (not (and description cents)) (wb/rerender request (str "/groups/" id)
+                                                 {:values {:description (param request "description")
+                                                           :amount      (param request "amount")}
+                                                  :errors #{:amount}})
       (ledger/add-expense! db (subject request) id description cents) (response/see-other (str "/groups/" id))
       :else (not-found!))))
 
@@ -59,25 +64,20 @@
   (ledger/delete-expense! db (subject request) (get-in request [:path-params :expense]))
   (response/see-other (str "/groups/" (group-id request))))
 
-(defn- canonical
-  "auth-base's default normalisation, repeated here because the ceremony keeps its
-  own private: an invitation must name the address the way the account will. A
-  ceremony configured with another `:normalise` would need this changed too — see
-  FRICTION.md, F4."
-  [identifier]
-  (str/lower-case (str/trim identifier)))
-
-(defn- invite [db request]
+(defn- invite
+  "The address is stored the way the ceremony will ask for the account — through
+  its own `normalise`, so a host that configured another rule changes it once."
+  [db ceremony request]
   (let [id (group-id request)]
     (if (and (param request "identifier")
-             (ledger/invite! db (subject request) id (canonical (param request "identifier"))))
+             (ledger/invite! db (subject request) id (auth/normalise ceremony (param request "identifier"))))
       (response/see-other (str "/groups/" id))
       (not-found!))))
 
 (defn- accept [db request]
   (let [s  (subject request)
         id (group-id request)]
-    (if (ledger/accept! db s (accounts/identifier-for db s) id)
+    (if (ledger/accept! db s (auth-jdbc/identifier-for (:datasource db) s) id)
       (response/see-other (str "/groups/" id))
       (response/see-other "/"))))
 
@@ -98,6 +98,6 @@
              ["/groups/:id" (gated {:get {:handler (partial group-page db)}})]
              ["/groups/:id/expenses" (gated {:post {:handler (partial add-expense db)}})]
              ["/groups/:id/expenses/:expense/delete" (gated {:post {:handler (partial delete-expense db)}})]
-             ["/groups/:id/invitations" (gated {:post {:handler (partial invite db)}})]
+             ["/groups/:id/invitations" (gated {:post {:handler (partial invite db ceremony)}})]
              ["/invitations/:id/accept" (gated {:post {:handler (partial accept db)}})]])]
      ["/health" {:get {:handler (partial health db)}}]]))

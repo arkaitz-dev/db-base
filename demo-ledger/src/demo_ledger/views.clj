@@ -19,11 +19,12 @@
                 [:button {:type "submit"} "Log out"]]
                [:span "not signed in"])}))
 
-(defn login [request {:keys [sent? spent?]}]
+(defn login [request {:keys [sent? spent? limited?]}]
   (list
    [:h2 "Sign in"]
    (when sent? [:p.ok [:strong "A link is on its way."] " In this demo it is printed to the server's console."])
    (when spent? [:p.error [:strong "That link no longer works."]])
+   (when limited? [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
    [:form {:method "post" :action "/login"}
     (security/csrf-field request)
     [:label "Email address "
@@ -54,7 +55,10 @@
                [:input {:type "text" :name "name" :maxlength "80" :required true}]]
               " " [:button {:type "submit"} "Create"])))
 
-(defn group-page [request {:keys [id name]} members expenses balances error]
+(defn group-page
+  "`form` is what `wb/rerender` hands a refused expense back with — the values
+  typed and the fields refused — or nil on an ordinary visit."
+  [request {:keys [id name]} members expenses balances {:keys [values errors]}]
   (list
    [:h2 name]
    [:h3 "Balances"]
@@ -62,12 +66,13 @@
     [:tbody (for [{:keys [identifier balance]} balances]
               [:tr [:td identifier] [:td.amount (money/format-cents balance)]])]]
    [:h3 "Expenses"]
-   (when (= "amount" error) [:p.error "That amount is not one this form accepts, such as 12.50."])
+   (when (contains? errors :amount) [:p.error "That amount is not one this form accepts, such as 12.50."])
    (post-form request (str "/groups/" id "/expenses")
-              [:label "What " [:input {:type "text" :name "description" :maxlength "120" :required true}]]
+              [:label "What " [:input {:type "text" :name "description" :maxlength "120" :required true
+                                     :value (:description values)}]]
               " "
               [:label "Amount " [:input {:type "text" :name "amount" :inputmode "decimal" :required true
-                                         :placeholder "12.50"}]]
+                                         :placeholder "12.50" :value (:amount values)}]]
               " " [:button {:type "submit"} "I paid this"])
    (if (seq expenses)
      [:ul#expenses

@@ -1,6 +1,6 @@
 (ns demo-ledger.main
-  "Boots the host. `port`, when given, moves both the server and the origin the
-  sign-in link is built from, which nothing else keeps in step."
+  "Boots the host. `port`, when given, is `:demo-ledger/port`, which the server and
+  the sign-in link's origin both read."
   (:require [clojure.java.io :as io]
             [demo-ledger.system]
             [dev.arkaitz.web-base.config :as config]
@@ -12,8 +12,7 @@
   ([] (config nil))
   ([port]
    (cond-> (wbi/read-string (config/env-file-readers "env.local.edn") (slurp (io/resource "config.edn")))
-     port (-> (assoc-in [:dev.arkaitz.web-base/server :port] port)
-              (assoc-in [:demo-ledger/auth-config :base-url] (str "http://localhost:" port))))))
+     port (assoc :demo-ledger/port port))))
 
 (defn -main [& [port]]
   (let [parsed (some-> port parse-long)]

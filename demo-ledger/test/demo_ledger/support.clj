@@ -15,8 +15,7 @@
             [dev.arkaitz.web-base.integrant :as wbi]
             [dev.arkaitz.web-base.testing :as wt]
             [integrant.core :as ig]
-            [next.jdbc :as jdbc]
-            [ring.mock.request :as mock]))
+            [next.jdbc :as jdbc]))
 
 (defn temp-db-path []
   (let [file (java.io.File/createTempFile "demo-ledger-" ".db")]
@@ -106,52 +105,42 @@
       (assoc-in [:demo-ledger/web-config :session-lifetime-ms] session-lifetime-ms)))
 
 (defn browser
-  "A cookie jar and the last page, which together are what a browser is.
-
-  It **accumulates**: `wt/with-cookies` merges one response's cookies into a
-  request that already carries some, and every request here is built fresh, so
-  chaining from the previous response alone would send only whatever that one
-  response happened to set — and the session cookie, set once at login, would be
-  dropped by the next page that set none. Measured the hard way: every test past
-  the login looked gated."
+  "One person's browser, held in an atom so a test reads as a sequence of clicks.
+  The browser itself is web-base's `testing/browser` — the jar that survives a page
+  setting no cookie, the token of the last page that had one, redirects followed —
+  created at the first request, because it needs the handler."
   []
-  (atom {:cookies {} :last nil}))
+  (atom nil))
 
-(defn- keep-cookies
-  "The jar after a response: a cookie set again replaces the old value, and one
-  the response deletes — which `wt/cookies` reports as nil — is forgotten."
-  [cookies set-by-response]
-  (reduce (fn [acc [name value]] (if (nil? value) (dissoc acc name) (assoc acc name value)))
-          cookies set-by-response))
+(defn- visit! [app jar method path params]
+  (:response (reset! jar (wt/visit (or @jar (wt/browser app)) method path params))))
 
-(defn- send! [app jar request]
-  (let [{:keys [cookies]} @jar
-        request  (cond-> request
-                   (seq cookies) (mock/header "cookie"
-                                              (str/join "; " (for [[k v] cookies] (str k "=" v)))))
-        response (app request)]
-    (swap! jar (fn [j] {:cookies (keep-cookies (:cookies j) (wt/cookies response))
-                        :last    response}))
-    response))
-
-(defn GET [app jar path] (send! app jar (mock/request :get path)))
+(defn GET [app jar path] (visit! app jar :get path nil))
 
 (defn POST
-  "A form submission carrying the CSRF token of whatever page this browser is
-  looking at — what a real form does, and what makes a missing token a failure
-  of the host rather than of the test."
+  "A form submission carrying the CSRF token of the last page that had one, as a
+  real form would."
   [app jar path params]
-  (send! app jar (mock/request :post path
-                               (assoc params "__anti-forgery-token"
-                                      (wt/csrf-token (:last @jar))))))
+  (visit! app jar :post path params))
 
-(defn location [response] (get-in response [:headers "Location"]))
+(defn landed
+  "`[status path]` of where `jar` is after GETting `path`: the status of the page it
+  ended on and the address bar. The pair and never the status alone — redirects are
+  followed, so a signed-out visit ends on the login page with a 200 as well."
+  [app jar path]
+  (let [response (GET app jar path)]
+    [(:status response) (:path @jar)]))
+
+(defn posted
+  "`[status path]` after POSTing `params` to `path`, as `landed` reads a GET."
+  [app jar path params]
+  (let [response (POST app jar path params)]
+    [(:status response) (:path @jar)]))
 
 (defn session-key-of
-  "The session cookie this browser holds — from the jar and not from the last
-  response, because the last response usually sets no cookie at all."
+  "The session cookie this browser holds."
   [jar]
-  (get (:cookies @jar) "ring-session"))
+  (get (:jar @jar) "ring-session"))
 
 (defn challenge-token
   "The token of the challenge just issued, read from the table through the

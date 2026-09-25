@@ -5,10 +5,10 @@
   person references `account`, so an outsider without one would be refused by a
   foreign key and a mutant would die for the wrong reason."
   (:require [clojure.test :refer [deftest is testing]]
-            [demo-ledger.accounts :as accounts]
             [demo-ledger.ledger :as ledger]
             [demo-ledger.money :as money]
             [demo-ledger.support :as support :refer [with-db]]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]
             [next.jdbc :as jdbc])
@@ -53,8 +53,8 @@
 
 (deftest a-non-member-reads-nothing-and-writes-nothing
   (with-db [db path]
-    (let [a     (accounts/register! db ada)
-          b     (accounts/register! db bob)
+    (let [a     (auth-jdbc/register! (:datasource db) ada)
+          b     (auth-jdbc/register! (:datasource db) bob)
           g     (ledger/create-group! db a "Trip")
           ghost (str (random-uuid))]
       (ledger/add-expense! db a g "Dinner" 900)
@@ -78,8 +78,8 @@
 
 (deftest what-each-member-owes-of-an-expense-is-their-own-share
   (with-db [db path]
-    (let [a (accounts/register! db ada)
-          b (accounts/register! db bob)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
+          b (auth-jdbc/register! (:datasource db) bob)
           g (ledger/create-group! db a "Trip")]
       (ledger/invite! db a g bob)
       (ledger/accept! db b bob g)
@@ -96,7 +96,7 @@
 
 (deftest an-address-sees-its-own-invitations-and-nobody-elses
   (with-db [db path]
-    (let [a (accounts/register! db ada)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
           g (ledger/create-group! db a "Trip")
           h (ledger/create-group! db a "Rent")]
       (ledger/invite! db a g bob)
@@ -110,7 +110,7 @@
   ;; take the invitation's deletion back with it, or the invitation is spent and nobody
   ;; joined.
   (with-db [db path]
-    (let [a (accounts/register! db ada)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
           g (ledger/create-group! db a "Trip")]
       (ledger/invite! db a g bob)
       (is (instance? SQLException (try (ledger/accept! db "no-such-account" bob g) nil (catch SQLException e e)))
@@ -122,7 +122,7 @@
 
 (deftest an-expense-and-its-shares-land-together-or-not-at-all
   (with-db [db path]
-    (let [a (accounts/register! db ada)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
           g (ledger/create-group! db a "Trip")]
       (testing "control: without the planted member the same call writes the expense and its shares"
         (let [id (ledger/add-expense! db a g "control" 1000)]
@@ -144,8 +144,8 @@
 (deftest cascade-happens-only-because-foreign-keys-is-in-the-url
   (let [shares-after-delete
         (fn [db path]
-          (let [a  (accounts/register! db ada)
-                b  (accounts/register! db bob)
+          (let [a  (auth-jdbc/register! (:datasource db) ada)
+                b  (auth-jdbc/register! (:datasource db) bob)
                 g  (ledger/create-group! db a "Trip")]
             (ledger/invite! db a g bob)
             (ledger/accept! db b bob g)
@@ -168,7 +168,7 @@
 
 (deftest balances-are-exact-and-sum-to-zero
   (with-db [db path]
-    (let [[a b c] (map #(accounts/register! db %) [ada bob carol])
+    (let [[a b c] (map #(auth-jdbc/register! (:datasource db) %) [ada bob carol])
           g       (ledger/create-group! db a "Trip")
           g2      (ledger/create-group! db a "Rent")]
       (doseq [[s who] [[b bob] [c carol]]]
@@ -192,8 +192,8 @@
 
 (deftest accepting-consumes-the-invitation-once-and-tolerates-an-existing-member
   (with-db [db path]
-    (let [a (accounts/register! db ada)
-          b (accounts/register! db bob)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
+          b (auth-jdbc/register! (:datasource db) bob)
           g (ledger/create-group! db a "Trip")]
       (is (= :invited (ledger/invite! db a g bob)) "witness: invited")
       (is (= :already-invited (ledger/invite! db a g bob)) "and inviting again is not an error")
@@ -213,7 +213,7 @@
 
 (deftest only-the-payer-deletes-an-expense
   (with-db [db path]
-    (let [[a b c] (map #(accounts/register! db %) [ada bob carol])
+    (let [[a b c] (map #(auth-jdbc/register! (:datasource db) %) [ada bob carol])
           g       (ledger/create-group! db a "Trip")]
       (ledger/invite! db a g bob)
       (ledger/accept! db b bob g)
@@ -238,7 +238,7 @@
   ;; writer is still waiting when it runs out, and under a deferred URL it has long
   ;; finished — which is what makes the parked caller's failure observable.
   (with-db [db path]
-    (let [a (accounts/register! db ada)
+    (let [a (auth-jdbc/register! (:datasource db) ada)
           g (ledger/create-group! db a "Trip")
           {:keys [arrived release! exit] parked :handle}
           (dbt/parking db #(.startsWith ^String % "INSERT INTO expense") 10000)
