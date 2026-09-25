@@ -124,9 +124,15 @@
   `ClassCastException` and leaves the pool open. **A parked caller holds a
   borrowed connection**, so a pool of one deadlocks the caller meant to run through,
   until the guard. The park comes before the driver sees the statement, so a caller in
-  autocommit holds no lock while it waits; **one parked inside a transaction does, and
-  an SQLite file then wants WAL**, where a reader does not block a writer. **An H2 memory
-  URL needs a close delay**, or the last connection to close takes the database with it."
+  autocommit holds no lock while it waits. **On SQLite, `parking` interleaves statements,
+  never transactions**: in the default deferred mode a transaction parked after its first
+  read has pinned a snapshot and fails at its first write once another writer commits,
+  and with `transaction_mode=IMMEDIATE` the write lock is taken when the transaction
+  begins — before the first statement is prepared, which is where the park sits — so any
+  other writer waits out its busy timeout. What an engine that runs transactions side by
+  side guarantees (PostgreSQL's row locks) is out of reach of both test engines, whatever
+  the harness. **An H2 memory URL needs a close delay**, or the last connection to close
+  takes the database with it."
   [handle accepts? guard-ms]
   (when-not (instance? DataSource (:datasource handle))
     (refuse! "parking takes the handle start returned, whose :datasource is a javax.sql.DataSource"

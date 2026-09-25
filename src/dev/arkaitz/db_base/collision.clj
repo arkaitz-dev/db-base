@@ -43,7 +43,10 @@
   a snapshot taken before the other writer committed finds nothing, and the write's
   exception leaves the same way. A host that wants to carry on inside its transaction
   marks a savepoint of its own inside `write!`: the transaction boundary is the host's
-  (SPEC §9), so none is taken here.
+  (SPEC §9), so none is taken here. **The usual answer inside a transaction is not this
+  function at all** but a write that asks its own question — an insert whose `SELECT`
+  carries a `WHERE NOT EXISTS` for the row it would add — because nothing about it can be
+  refused; the README's recipes show one.
 
   A write that failed because no connection could be borrowed makes the re-read borrow
   too, so that failure costs the pool's timeout twice."

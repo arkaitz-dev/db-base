@@ -141,6 +141,9 @@ PostgreSQL, 23000 on MySQL and nothing at all on SQLite. Two rules are yours to 
 It holds no SQL and takes no datasource, on purpose: a function here that accepted a
 statement would be the first step of a query builder, which `SPEC.md` §9 forbids.
 
+It is for a write in autocommit. Inside a transaction you opened, use a conditional write
+instead — see the recipes below.
+
 ## In a host's tests
 
 `dev.arkaitz.db-base.testing` is for your test suite, never a request path.
@@ -172,10 +175,22 @@ It makes no temporary database: that is a file, and this library reads none.
 
 ## Recipes a host keeps relearning
 
-- **SQLite wants WAL and a busy timeout, in the JDBC URL**:
-  `jdbc:sqlite:app.db?journal_mode=WAL&busy_timeout=5000`. In the default journal a
-  reader blocks a writer, and without a timeout the first contention is an error. The URL
-  is yours, which is why this library has no knob for it.
+- **SQLite wants WAL and a busy timeout, in the JDBC URL — and, once a transaction reads
+  before it writes, `transaction_mode=IMMEDIATE` too**:
+  `jdbc:sqlite:app.db?journal_mode=WAL&busy_timeout=5000&transaction_mode=IMMEDIATE`. In the
+  default journal a reader blocks a writer, and without a timeout the first contention is
+  an error. The third one is the one nobody expects: in SQLite's default *deferred* mode a
+  transaction's first read pins a snapshot, and if another connection commits before the
+  transaction's first write, that write fails with `SQLITE_BUSY_SNAPSHOT` — which no busy
+  timeout waits out, because it is not a wait. Measured on a host whose `join!` reads an
+  event and then books a place: the loser of the race got that error, an intermittent 500.
+  `IMMEDIATE` takes the write lock when the transaction begins, so the other writer waits
+  instead. The URL is yours, which is why this library has no knob for it.
+- **A write that may collide inside a transaction is written conditionally**, not
+  arbitrated: `INSERT INTO membership (…) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM
+  membership WHERE …)`. On PostgreSQL a refused statement aborts the whole transaction, so
+  `arbitrate!`'s look afterwards has nothing to look through — and SQLite, which keeps the
+  transaction alive, would let the mistake pass every test.
 - **Counters and epoch milliseconds are `BIGINT`, never `NUMERIC`.** A `NUMERIC` column
   comes back as a `BigDecimal`, and `(= 0M 0)` is false in Clojure — so a revocation
   generation compared with `=` silently never matches.
