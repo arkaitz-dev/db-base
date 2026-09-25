@@ -19,7 +19,7 @@ were written, because they are the reason for each fix.
 | F5 | web-base 0.3.0, `8cb4dc2`, `d7f5562` | `testing/browser`, and `:path`, which moving the first host onto it showed was missing. Every host's suite drives it. |
 | F6 | db-base `325c887` | `parking`'s docstring: statements, never transactions, on SQLite. |
 | F7 | db-base `325c887` | README recipe: `transaction_mode=IMMEDIATE` for transactions that read first. |
-| F8 | auth-base `c3bc503` | Not a library ref — auth to server would be a cycle — but a host pattern, documented and tested: one port key read by the server and the link origin. Every host uses it. |
+| F8 | auth-base `c3bc503` | **Half resolved.** The port and the link origin can no longer drift: not a library ref — auth to server would be a cycle — but a host pattern, documented and tested, one port key read by both, and every host uses it. **The headline is not resolved:** `main.clj` and `system.clj` are still identical modulo the namespace across `demo-ledger` and `demo-events` (checked with `diff` after the move), and the console `deliver!` is still copied into three hosts. Both are host wiring rather than a library defect, and nothing in the three libraries was changed for them. |
 | F9 | auth-base 0.2.0, `557fc2b` | The `429` renders the host's view with `:limited? true`; every host's login says why, and a seam test walks the sixth sign-in. |
 
 Host commits: demo-tasks `b024851`, demo-ledger `efd809b`, demo-events `35a7e85`.
