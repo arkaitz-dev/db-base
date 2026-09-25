@@ -222,6 +222,11 @@ host that needed them; the third is untouched:
       writers at the file, and a naive store passes that every time on this machine,
       measured, with the naive store kept as the control that must show two winners.
 
+- [ ] **auth-base's `429` answers `Retry-After: 60` whatever the configured window is**
+      (a literal in its `handlers.clj`); `demo-tasks` sets 15 minutes, so a client that
+      obeys the header retries into the same refusal. Measured 2026-09-25 against the
+      running demo.
+
 Two more were opened there in the same work and are recorded above under the second
 consumer: the link scanner that burns a magic link before its recipient clicks it, and
 the obligation that `:on-unknown`'s return must equal what `subject-for` answers after.
