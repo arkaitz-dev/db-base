@@ -37,7 +37,7 @@ a facade that logs nowhere until the host supplies a backend, and ragtime brings
 never requires `dev.arkaitz.db-base.integrant` loads neither. A test enforces that list,
 and a new arrival on it is a decision recorded with its reason.
 
-## The three functions
+## The lifecycle: three functions
 
 ```clojure
 (require '[dev.arkaitz.db-base :as db])
@@ -113,6 +113,76 @@ the reason this library is more than wiring.
 **Before you wire it, know what it costs.** A session in a row means every request touches
 the database: a visitor who never signs in still leaves a row, because the CSRF token
 lives in the session, and nothing removes those but `reclaim-expired!`.
+
+## A write the engine refused
+
+`dev.arkaitz.db-base.collision/arbitrate!` is for the write that may lose a race — an
+account created twice, a row per session, a lock — where the engine refusing it is the
+ordinary case and not a failure.
+
+```clojure
+(require '[dev.arkaitz.db-base.collision :as collision])
+
+(collision/arbitrate!
+ #(insert-account! ds subject identifier)   ; the write, which returns its own answer
+ #(subject-for ds identifier))              ; what it was for, if it is there now
+```
+
+If the write throws an `SQLException`, the second function runs once: a truthy answer is
+returned in the write's place, and nil or false rethrows the write's own exception,
+unwrapped. **It never reads the SQLSTATE**, because the same refusal is 23505 on
+PostgreSQL, 23000 on MySQL and nothing at all on SQLite. Two rules are yours to keep:
+
+- **The second function asks for everything that makes the row yours**, not only its
+  key. A look by key alone accepts somebody else's row as your own.
+- **It reads.** A fallback that writes is update-or-insert, which is exactly what the
+  session store refuses to be; where it is right for a table of yours, write it out.
+
+It holds no SQL and takes no datasource, on purpose: a function here that accepted a
+statement would be the first step of a query builder, which `SPEC.md` §9 forbids.
+
+## In a host's tests
+
+`dev.arkaitz.db-base.testing` is for your test suite, never a request path.
+
+```clojure
+(require '[dev.arkaitz.db-base.testing :as dbt])
+
+(dbt/rows config "SELECT id FROM task WHERE owner = ?" owner)  ; [[1] [2]]
+(dbt/one  config "SELECT COUNT(*) FROM task")                  ; 2
+
+(let [{:keys [handle arrived release! exit]}
+      (dbt/parking db-handle #(re-find #"(?i)^\s*delete" %) 10000)]
+  ;; hand `handle` to the caller that must stop before its DELETE, wait on `arrived`,
+  ;; run the other caller to completion, then (release!) and assert @exit = :released
+  )
+```
+
+- **`rows` and `one`** read through a connection of their own, opened from the same map
+  `start` takes — never the pool, because a test that reads a write back through the code
+  that made it is asking the same code twice. A `Clob` comes back as text, since H2 and
+  SQLite disagree about that column.
+- **`parking`** suspends the first statement your predicate accepts, so an interleaving
+  is chosen rather than raced for; SQLite serialises writers, and a barrier alone passes
+  a broken implementation every time. `:exit` says whether the test ended the park or
+  the guard did — assert it. Stop the handle you passed in, not `:handle`; a pool of one
+  deadlocks.
+
+It makes no temporary database: that is a file, and this library reads none.
+
+## Recipes a host keeps relearning
+
+- **SQLite wants WAL and a busy timeout, in the JDBC URL**:
+  `jdbc:sqlite:app.db?journal_mode=WAL&busy_timeout=5000`. In the default journal a
+  reader blocks a writer, and without a timeout the first contention is an error. The URL
+  is yours, which is why this library has no knob for it.
+- **Counters and epoch milliseconds are `BIGINT`, never `NUMERIC`.** A `NUMERIC` column
+  comes back as a `BigDecimal`, and `(= 0M 0)` is false in Clojure — so a revocation
+  generation compared with `=` silently never matches.
+- **If your schema must run on more than one engine, write it the way §8's table is
+  written**: `VARCHAR`, `CLOB` for long text (HSQLDB and Derby refuse `TEXT`), `BIGINT`,
+  and no clause one family takes and another refuses. The suite's own dialect table, in
+  `test/dev/arkaitz/db_base/dialect_test.clj`, says which engine refuses which form.
 
 ## What it will not do
 
@@ -210,11 +280,12 @@ is that the *decisions* are the value — which pool, which migration tool, what
 when a migration fails at boot, whether a password may ever be defaulted — and those get
 re-litigated in every project otherwise.
 
-As of this writing it has **one** consumer, the `demo/` above, and the exit condition
-needs two. §8's store is written and that demo uses it — but §12 records, measured and
-in full, that the host's own features would work under a cookie, so nobody has yet
-*needed* the part of this library that is not wiring. Read §12 before adding anything;
-that paragraph is the point of the whole thing.
+It has **two** consumers, the hosts above, and the exit condition is not met — which is
+a narrower claim than it sounds. §6 and §7 remain wiring anybody could write; what the
+second host showed is that §8 is a contract a real feature depends on, one a sealed
+cookie cannot serve. The two namespaces added on 2026-09-25 did not change that: no
+consumer's code asked for them, their tests did. Read §12 before adding anything; that
+section is the point of the whole thing.
 
 ## Licence
 

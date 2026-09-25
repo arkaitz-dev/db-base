@@ -674,9 +674,27 @@ Written down before it is tempting, because each of these has a plausible first 
 ## 10 · Scope
 
 **In**: the pool and its lifecycle, migrations at boot, a readiness check, and
-implementations of published third-party ports whose tables are its own.
+implementations of published third-party ports whose tables are its own. Since
+2026-09-25, two more, each in a namespace of its own and each pinned var by var by
+`structure_test`, so a third var is an edit of this paragraph before it is code:
 
-**Out**: everything in §9, the engine, the schema, the SQL, and the driver.
+- **`dev.arkaitz.db-base.collision/arbitrate!`** — a write the engine refused, answered
+  by looking at whether what it was for is there now, never by SQLSTATE (23505 on
+  PostgreSQL, 23000 with 1062 on MySQL and MariaDB, none at all on SQLite — measured). It
+  takes two functions of the host's and holds no SQL, takes no datasource and reads no
+  row itself. Its second function reads; a fallback that writes is update-or-insert,
+  which §8 is the argument against.
+- **`dev.arkaitz.db-base.testing`** — for a host's tests: `rows` and `one`, a reader over
+  a connection of its own opened from the configuration `start` takes; and `parking`,
+  which suspends one caller before a statement it names, so an interleaving is chosen
+  rather than raced for. Nothing that touches a file (§5 has no exemption, and a
+  temporary database is a file), and no race orchestrator, because the three places that
+  park orchestrate three different ways.
+
+**Out**: everything in §9, the engine, the schema, the SQL, and the driver. **A function
+here that accepts a statement from the host is §9's first entry, whatever it is
+called** — which is the line `arbitrate!` was shaped to stay behind, and the reason
+`insert-or-read!` over SQL vectors was rejected for it.
 
 **Integrant is used, not imposed.** `start` and `stop` are ordinary functions, and an
 optional namespace ships one key's `init-key` **and** `halt-key!` — the second because
@@ -718,10 +736,16 @@ web-base and is wired the way web-base is — asked.)
 | The host's engine is PostgreSQL, chosen from three that were all run; the library assumes none of them, and the test pair is deliberately not it | §3 |
 | Integrant is used, not imposed: an optional namespace, one key | §10 |
 | A readiness check belongs here, and its timeout has no default | §6 |
+| A refused write is answered by a look and never by SQLSTATE: one function, two of the host's, no SQL | §10 |
+| A host's tests get a reader and a park from here, and nothing that touches a file or runs a race | §10 |
 
 **Open**
 
-Nothing. The last one closed 2026-09-21.
+- **Whether `testing` earns a second consumer.** Its parker was written by one host;
+  the helpers both hosts share — a temporary SQLite file, a boot and teardown around
+  it — are the ones §5 forbids shipping. If no second host's tests reach for it, it is
+  one host's code maintained here, which is web-base §7's warning about a base built
+  for one. (Opened 2026-09-25; the list had been empty since 2026-09-21.)
 
 - ~~**Reclaiming expired rows**~~: **settled — a function the operator calls**, and
   nothing else. Not on write: that is a second statement on every request that touches a
@@ -926,3 +950,36 @@ length today, is not the store's existence but its contract: that a zero-row upd
 correct, that an upsert resurrects a revoked session, and that Ring's own reference
 implementation does the wrong thing. That is the part which would otherwise be copied —
 copied wrong.
+
+### Two additions, and what asked for them, 2026-09-25
+
+§10 gained `arbitrate!` and the `testing` namespace, decided with the user after
+`demo-tasks/` had written both by hand. **No consumer's code asked for either — their
+tests did, and only in part**, and that is the sentence to weigh them by.
+
+- **`arbitrate!`** had three hand-written copies before it existed: §7's lock-table
+  creation here, and `register!` and `seen!` in `demo-tasks`. It is not the "query
+  helpers" declined on 2026-09-22 — those took statements, and this takes none, which is
+  what §10's new *Out* sentence holds it to. `take-lock-row!` did **not** move onto it:
+  there a collision means wait, and the holder is read once when the wait runs out.
+- **`testing`**'s parker was written by one host, not two. What both hosts share is a
+  temporary database file, which cannot ship. §11 carries that as an open question
+  rather than a settled one.
+
+**What moving them found**, which is the evidence either way:
+
+- `seen!`'s re-read asked by session id alone, so a row under another subject for that
+  session answered "recorded" while the person's list stayed empty. A latent defect in
+  committed code, found by the primitive's own docstring rule — the re-read must ask for
+  every column that makes the row the caller's. (An earlier claim that a bare
+  `catch SQLException` had been committed there was wrong: a mutant caught it first.)
+- The host's parker let a driver's `SQLException` out as an
+  `UndeclaredThrowableException`, so no `catch SQLException` above it could see it; it
+  discarded `await`'s answer, so a park that ran out looked released; and its race never
+  checked that the suspended caller came back, so a store that hung the loser was green.
+- `register!`'s refused-insert branch had never been reached by any test.
+
+That is three copies of a subtle shape and one harness, and between them one latent
+defect in the copies, three in the harness and a branch no test had reached — the case
+this section already makes for §8, that code otherwise copied is copied wrong. It does **not** move the exit condition: none of it is a consumer's
+feature, and §6 and §7 remain wiring anybody could write.

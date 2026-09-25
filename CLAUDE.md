@@ -17,8 +17,11 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 
 **Specification settled 2026-09-09. `start` and `stop` written 2026-09-12, `ready?`
 2026-09-13, the migration run 2026-09-19, its lock 2026-09-19, and §3's two-engine
-proof 2026-09-20, §10's Integrant key the same day, and §8's session store 2026-09-21.**
-Everything the specification asks for is written and tested.
+proof 2026-09-20, §10's Integrant key the same day, §8's session store 2026-09-21, and
+§10's two amendments — `collision/arbitrate!` and the `testing` namespace — 2026-09-25.**
+Everything the specification asks for is written and tested. Every public var of `src`
+is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
+listed there with its reason.
 
 **The second consumer arrived 2026-09-22** and with it §12's exit condition, which is
 the sentence this repository exists to be judged by. It is not met: `demo-tasks/` uses
@@ -372,6 +375,15 @@ is any code to break.**
 query language. `next.jdbc` already accepts a datasource and a vector; anything on top
 of that has to justify itself against §9 of the specification, which lists what this
 library must never own.
+
+**`arbitrate!` is the near-miss to measure the next one against** (2026-09-25). It came
+in as two functions of the host's and no SQL, and the shape it was chosen over —
+`insert-or-read!` over SQL vectors — would have published a statement runner and sat one
+parameter away from update-or-insert, the upsert §8 exists to refuse. §10's *Out* now
+says it in one sentence: a function here that accepts a statement from the host is §9's
+first entry, whatever it is called. The `testing` namespace is the other door: it is for
+tests, and the day it grows a helper a request path would want, it has become the
+erosion.
 
 ## The honest state of this repository
 
