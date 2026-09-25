@@ -4,7 +4,25 @@ Written 2026-09-25 while building `demo-ledger/` and `demo-events/`, two more ho
 web-base, auth-base and db-base, at the user's request: *collect the friction points
 that would help complete or improve any of the three libraries*. Each entry was written
 at the moment it was met, with what was measured, and says which library it belongs to.
-An entry is evidence, not a decision: none of them has been acted on here.
+An entry is evidence, not a decision — and every one of them was acted on the same day,
+at the user's request; the next section says where. The entries below are left as they
+were written, because they are the reason for each fix.
+
+## Resolved 2026-09-25
+
+| | Where | What was done |
+|---|---|---|
+| F1 | auth-base 0.2.0, `3d56215` | `dev.arkaitz.auth-base.jdbc`, optional: the store, `register!`, `identifier-for`, `ddl` and `check!`, portable statements, single use proved on H2 and SQLite with forced interleavings. The three hosts dropped their copies and call `check!` at boot. |
+| F2 | db-base `325c887` | README recipe: a conditional write inside the transaction; `arbitrate!`'s docstring points to it. |
+| F3 | web-base 0.3.0, `4b8451e` | `wb/rerender` and `response/unprocessable`; demo-ledger's amount and demo-events' event now come back as the page, 422, with the values typed. |
+| F4 | auth-base 0.2.0, `9400536` | `auth/normalise`; demo-ledger's invitations use it. |
+| F5 | web-base 0.3.0, `8cb4dc2`, `d7f5562` | `testing/browser`, and `:path`, which moving the first host onto it showed was missing. Every host's suite drives it. |
+| F6 | db-base `325c887` | `parking`'s docstring: statements, never transactions, on SQLite. |
+| F7 | db-base `325c887` | README recipe: `transaction_mode=IMMEDIATE` for transactions that read first. |
+| F8 | auth-base `c3bc503` | Not a library ref — auth to server would be a cycle — but a host pattern, documented and tested: one port key read by the server and the link origin. Every host uses it. |
+| F9 | auth-base 0.2.0, `557fc2b` | The `429` renders the host's view with `:limited? true`; every host's login says why, and a seam test walks the sixth sign-in. |
+
+Host commits: demo-tasks `b024851`, demo-ledger `efd809b`, demo-events `35a7e85`.
 
 ## In order of what it costs
 

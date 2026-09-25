@@ -174,14 +174,13 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
         is documented in auth-base now, and nothing enforces it; proving a host honours
         it belongs to that host's tests, and `demo-tasks` does so only implicitly.
 
-- [ ] **`FRICTION.md`: nine findings from two more hosts** (`demo-ledger/`,
-      `demo-events/`, 2026-09-25), prioritised at its top, none acted on. The two that
-      are this library's and cost most: **F7** — on SQLite a transaction that reads
-      before it writes fails with SQLITE_BUSY_SNAPSHOT under concurrency, measured, and
-      today's README recipe omits the cure, `transaction_mode=IMMEDIATE`; **F2** —
-      `arbitrate!` cannot look through an aborted PostgreSQL transaction, which SQLite
-      hides. Also closed there: §11's open row, whether `testing` earns a second
-      consumer — it earned two. Deciding what to do with each is the user's.
+- [x] **`FRICTION.md`: nine findings from two more hosts** (`demo-ledger/`,
+      `demo-events/`, 2026-09-25) — **all nine acted on the same day**, at the user's
+      request; its "Resolved" table says where. This library's three (F2, F6, F7) are
+      README recipes and docstrings (`325c887`); the rest shipped as web-base 0.3.0 and
+      auth-base 0.2.0, and all four hosts moved onto them (`b024851`, `efd809b`,
+      `35a7e85`). Also closed there: §11's open row, whether `testing` earns a second
+      consumer — it earned two.
 
 - [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
       the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
@@ -294,6 +293,9 @@ is any code to break.**
   security of a link that travels by email, and two statements have a window between
   them. **Written 2026-09-22 in `demo-tasks/`** — in the host, as rule 3 requires — as
   one `DELETE … RETURNING`, so the delete is what decides and the engine serialises it.
+  **Since 2026-09-25 it lives in auth-base's optional `jdbc` namespace** (F1), portable
+  because a library cannot know the engine: a read, then a `DELETE` whose update count
+  says who won — the read never decides.
   The trap survived into the *test* rather than the code: two threads and a barrier are
   green against the naive version every time on this machine, because SQLite serialises
   writers at the file. What catches it is **forcing** the interleaving with a
