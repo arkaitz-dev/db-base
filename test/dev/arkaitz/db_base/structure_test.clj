@@ -1053,3 +1053,62 @@
             (str "SPEC §10: Integrant is used, not imposed — only " integrant-exempt-ns
                  " may name it, and a require of it elsewhere compiles, loads and passes every"
                  " other test"))))))
+
+;; --- the public surface, var by var ----------------------------------------
+
+(def ^:private accepted-publics
+  "Every public var of `src`, namespace by namespace, with the reason each exists. A new
+  one is a decision taken here, with its reason beside it — the discipline
+  `accepted-closure` applies to jars, applied to vars — because the boundary this library
+  expects to erode is precisely a plausible first helper (SPEC §9, CLAUDE.md \"Where the
+  boundary is expected to erode\"). A namespace nobody listed reds as surely as a var
+  nobody listed: what is compared is every namespace found on disk, never only the ones
+  written here, or a new namespace would be the unwatched door. Added 2026-09-25, before
+  the first two additions it exists to make visible."
+  '{dev.arkaitz.db-base                {start  "SPEC §6: the pool opened and migrated before anything serves"
+                                        stop   "SPEC §6: the pool closed"
+                                        ready? "SPEC §6: a readiness check"}
+    ;; Methods on Integrant's multimethods only, which define no var (SPEC §10).
+    dev.arkaitz.db-base.integrant      {}
+    dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
+                                        reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
+    dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"
+                                        migrations "SPEC §8: the library's own migration run"}})
+
+(defn- surface-diff
+  "What `found` has that `accepted` does not, and the reverse, as a map of the non-empty
+  differences — `{}` when they agree."
+  [accepted found]
+  (let [accepted (update-vals accepted (comp set keys))
+        both     (set/intersection (set (keys accepted)) (set (keys found)))]
+    (into {} (remove (comp empty? val))
+          {:unlisted-namespaces (set/difference (set (keys found)) (set (keys accepted)))
+           :missing-namespaces  (set/difference (set (keys accepted)) (set (keys found)))
+           :unlisted-vars       (into {} (for [n both
+                                              :let [d (set/difference (found n) (accepted n))]
+                                              :when (seq d)]
+                                          [n d]))
+           :missing-vars        (into {} (for [n both
+                                              :let [d (set/difference (accepted n) (found n))]
+                                              :when (seq d)]
+                                          [n d]))})))
+
+(deftest every-public-var-of-src-is-named-with-its-reason
+  (let [found (into {} (for [n (module-namespaces)] [n (set (keys (ns-publics n)))]))]
+    (testing "preconditions: the walk read the sources on disk and not a subset of them"
+      (is (= (count (source-files (src-root))) (count found))
+          (str "one entry per source file, or a namespace went unwatched: " (sort (keys found))))
+      (is (contains? (get found 'dev.arkaitz.db-base) 'start)
+          "the walk reached the real library, which is where `start` lives"))
+    (testing "controls: the comparison sees each kind of arrival — without these, a diff that
+              always answered `{}` would pass silently"
+      (is (= {:unlisted-vars {'dev.arkaitz.db-base #{'query}}}
+             (surface-diff accepted-publics (update found 'dev.arkaitz.db-base conj 'query)))
+          "a helper added beside `start` is seen")
+      (is (= {:unlisted-namespaces #{'dev.arkaitz.db-base.sql}}
+             (surface-diff accepted-publics (assoc found 'dev.arkaitz.db-base.sql #{'where})))
+          (str "and so is a whole new namespace, which a pin over the listed namespaces alone"
+               " would have let through untouched")))
+    (is (= {} (surface-diff accepted-publics found))
+        (str "SPEC §9 and CLAUDE.md: every public var of src is listed in `accepted-publics`"
+             " with its reason. Decide an arrival there — do not widen this test"))))
