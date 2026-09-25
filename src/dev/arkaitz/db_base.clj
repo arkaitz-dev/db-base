@@ -36,6 +36,7 @@
   source's order, never from the order the control table returns them in."
   (:require [clojure.string :as str]
             [ragtime.core :as ragtime]
+            [dev.arkaitz.db-base.collision :as collision]
             [dev.arkaitz.db-base.session.schema :as schema]
             [ragtime.next-jdbc :as ragtime-jdbc]
             [ragtime.protocols :as ragtime-protocols]
@@ -374,12 +375,20 @@
   "Probe, create, probe again. The existence clause some engines offer for `CREATE TABLE`
   is not ANSI — Derby rejects it, and §3's scan will not let src spell it, here or in a
   docstring — and two boots can race for the creation, which this absorbed 200 times out
-  of 200 (measured, SPEC §7)."
+  of 200 (measured, SPEC §7).
+
+  The second probe is `collision/arbitrate!`'s re-read: a refused creation is answered
+  by whether the table is there now, never by the engine's code for the refusal. This is
+  where that function's shape was first written, before any host needed it; `readable?`
+  answers `false` for a table that is not there, which the function reads as nothing
+  found and rethrows. `take-lock-row!` is the same event with the opposite meaning — a
+  lost race there means wait, not done — and so does not use it."
   [ds]
   (when-not (readable? ds lock-table)
-    (try (update! ds (str "CREATE TABLE " lock-table " (id VARCHAR(64) NOT NULL PRIMARY KEY,"
-                          " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
-         (catch SQLException e (when-not (readable? ds lock-table) (throw e))))))
+    (collision/arbitrate!
+     #(update! ds (str "CREATE TABLE " lock-table " (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+     #(readable? ds lock-table))))
 
 (defn- lock-held-elsewhere [run holder acquired-at]
   (let [wait-ms (:wait-ms run)]
