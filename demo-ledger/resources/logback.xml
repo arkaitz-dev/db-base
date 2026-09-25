@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The host's logging, not the libraries': db-base ships no backend, and HikariCP's
+     facade logs nowhere until one arrives. INFO keeps the boot legible; the pool's
+     DEBUG dump of every setting is useful exactly once.
+
+     `%X{request-id}` is web-base's, which puts one in the MDC per request — without
+     it in the pattern, two people's lines interleave and neither can be followed. -->
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level [%X{request-id}] %logger{28} — %msg%n</pattern>
+    </encoder>
+  </appender>
+  <logger name="com.zaxxer.hikari" level="INFO"/>
+  <logger name="org.eclipse.jetty" level="INFO"/>
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

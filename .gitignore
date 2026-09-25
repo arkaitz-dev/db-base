@@ -64,3 +64,11 @@ out/
 /demo-tasks.db-journal
 /demo-tasks.db-wal
 /demo-tasks.db-shm
+/demo-ledger.db
+/demo-ledger.db-journal
+/demo-ledger.db-wal
+/demo-ledger.db-shm
+/demo-events.db
+/demo-events.db-journal
+/demo-events.db-wal
+/demo-events.db-shm

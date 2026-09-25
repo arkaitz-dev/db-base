@@ -1,0 +1,31 @@
+;; The system, as data. `foreign_keys=true` rides in the URL beside WAL and the busy
+;; timeout: SQLite accepts every REFERENCES and ON DELETE CASCADE in the schema and
+;; ignores them unless each connection turns them on. The pool's connections are
+;; opened from this URL, so every one of them does. `transaction_mode=IMMEDIATE`
+;; because this host's transactions read before they write: in SQLite's default
+;; deferred mode that read pins a snapshot, and a writer committing in between makes
+;; the transaction's first write fail with SQLITE_BUSY_SNAPSHOT, which no busy
+;; timeout waits out (measured — FRICTION.md, F7).
+{:dev.arkaitz.db-base/database
+ {:jdbc-url   "jdbc:sqlite:demo-ledger.db?journal_mode=WAL&busy_timeout=5000&foreign_keys=true&transaction_mode=IMMEDIATE"
+  :user       ""
+  :password   ""
+  :pool       {:max 4 :timeout-ms 5000}
+  :migrations {:dir "demo-ledger/migration" :lock-wait-ms 5000}
+  :sessions   {:lock-wait-ms 5000}}
+
+ :demo-ledger/auth-config {:db       #ig/ref :dev.arkaitz.db-base/database
+                           :base-url "http://localhost:3002"
+                           :ttl-ms   900000}
+
+ :dev.arkaitz.auth-base/ceremony #ig/ref :demo-ledger/auth-config
+
+ :demo-ledger/web-config {:db                  #ig/ref :dev.arkaitz.db-base/database
+                          :ceremony            #ig/ref :dev.arkaitz.auth-base/ceremony
+                          :session-lifetime-ms 3600000
+                          :secure?             false}
+
+ :dev.arkaitz.web-base/handler #ig/ref :demo-ledger/web-config
+
+ :dev.arkaitz.web-base/server {:handler #ig/ref :dev.arkaitz.web-base/handler
+                               :port    3002}}
