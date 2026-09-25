@@ -1073,6 +1073,11 @@
     ;; 2026-09-25. Two thunks and no SQL, so §9's query builder cannot grow from it; a
     ;; second var here is an amendment of SPEC §10 first.
     dev.arkaitz.db-base.collision      {arbitrate! "SPEC §10: a refused write answered by a look, never by SQLSTATE"}
+    ;; 2026-09-25. For a host's tests: what demo-tasks wrote by hand, minus anything that
+    ;; touches a file (§5) or orchestrates a race, which each host builds differently.
+    dev.arkaitz.db-base.testing        {rows    "SPEC §10: a reader that is not the code under test, Clob read as text"
+                                        one     "SPEC §10: `rows` cut to one value"
+                                        parking "SPEC §10: one caller suspended between its statements, and how it ended"}
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
                                         reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
     dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"
