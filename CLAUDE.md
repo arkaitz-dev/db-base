@@ -40,8 +40,12 @@ work**, never from convention. Observed:
     clojure -M:demo-test                   # its acceptance test
     clojure -M:demo-tasks [port]           # the three-library host; the port also moves the link's origin
     clojure -M:demo-tasks-test             # its acceptance test, with the cookie control
+    clojure -M:demo-ledger [port]          # shared expenses on all three libraries (3002)
+    clojure -M:demo-ledger-test
+    clojure -M:demo-events [port]          # events with a capacity and a waiting list (3003)
+    clojure -M:demo-events-test
 
-**Both demos must never reach `:test`**: `structure_test`'s logging-backend scan reads
+**No demo may ever reach `:test`** — `demo/`, `demo-tasks/`, `demo-ledger/`, `demo-events/`: `structure_test`'s logging-backend scan reads
 the running JVM's classpath, and the web stack brings logback. Its own docstring says a
 backend arriving through a test extra "reds falsely but visibly, and the fix is to move
 it, never to filter the scan". They are four aliases and two directories, and nothing a
@@ -168,6 +172,15 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
         generation is keyed on the frozen value and `revoke!` moves a different one. It
         is documented in auth-base now, and nothing enforces it; proving a host honours
         it belongs to that host's tests, and `demo-tasks` does so only implicitly.
+
+- [ ] **`FRICTION.md`: nine findings from two more hosts** (`demo-ledger/`,
+      `demo-events/`, 2026-09-25), prioritised at its top, none acted on. The two that
+      are this library's and cost most: **F7** — on SQLite a transaction that reads
+      before it writes fails with SQLITE_BUSY_SNAPSHOT under concurrency, measured, and
+      today's README recipe omits the cure, `transaction_mode=IMMEDIATE`; **F2** —
+      `arbitrate!` cannot look through an aborted PostgreSQL transaction, which SQLite
+      hides. Also closed there: §11's open row, whether `testing` earns a second
+      consumer — it earned two. Deciding what to do with each is the user's.
 
 - [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
       the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
