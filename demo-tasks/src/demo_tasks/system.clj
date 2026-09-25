@@ -18,10 +18,9 @@
   session's row lingers until its expiry instead of being deleted at the next
   request. With a sealed cookie there is no row to linger, so this host is the
   first one that could have noticed."
-  (:require [demo-tasks.accounts :as accounts]
-            [demo-tasks.auth-store :as auth-store]
-            [demo-tasks.routes :as routes]
+  (:require [demo-tasks.routes :as routes]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base.session :as session]
             ;; Requiring these three is what installs the keys `config.edn`
             ;; names. No library loads another: this host loads all three.
@@ -30,8 +29,13 @@
             [dev.arkaitz.web-base.integrant]
             [integrant.core :as ig]))
 
-(defmethod ig/init-key :demo-tasks/auth-config [_ {:keys [db base-url ttl-ms]}]
-  {:store    (auth-store/store db)
+(defmethod ig/init-key :demo-tasks/port [_ port] port)
+
+(defmethod ig/init-key :demo-tasks/auth-config [_ {:keys [db port ttl-ms]}]
+  ;; The store is auth-base's own, over the pool db-base opened; this host keeps
+  ;; the three tables as its migrations 001–003, copied from `auth-jdbc/ddl`, and
+  ;; `check!` is what makes a copy that drifted fail here rather than at a login.
+  {:store    (auth-jdbc/store (auth-jdbc/check! (:datasource db)))
    ;; The console, because a demo that needed a mail server would be a demo
    ;; about mail servers. A real host swaps this one function and nothing else.
    :deliver!  (fn [identifier link]
@@ -39,13 +43,15 @@
                 (println "  a sign-in link for" identifier)
                 (println " " link)
                 (println))
-   :link      {:base-url base-url :redeem-path "/login/redeem"}
+   ;; The port the server listens on, read from the same key the server reads,
+   ;; so moving one cannot leave links pointing at the other.
+   :link      {:base-url (str "http://localhost:" port) :redeem-path "/login/redeem"}
    :ttl-ms    ttl-ms
    ;; The key this host exists to exercise: an address nobody has a record of
    ;; becomes an account here, at redemption, once a single-use token has
    ;; vouched for it. What it returns is what `subject-for` answers from then
    ;; on, which auth-base requires and which revocation depends on.
-   :on-unknown (fn [identifier] (accounts/register! db identifier))})
+   :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})
 
 (defmethod ig/init-key :demo-tasks/web-config [_ {:keys [db ceremony session-lifetime-ms secure?]}]
   ;; Built once and handed to two places: to web-base as `:session :store`, and

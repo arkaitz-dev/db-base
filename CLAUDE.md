@@ -51,9 +51,10 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-`demo-tasks` consumes **auth-base from `../auth-base`**, not from Clojars: the Integrant
-key and the `:on-unknown` hook it needs were written for it on 2026-09-22 and are not in
-0.1.0. A `:mvn/version` there would claim a release that has not happened.
+Every host consumes **web-base 0.3.0 and auth-base 0.2.0 as releases** (2026-09-25),
+which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
+host signs people in through auth-base's optional `jdbc` store, keeps those three tables
+as migrations copied from its `ddl`, and calls its `check!` at boot.
 
 `clojure -M:test -e '…'` does **not** evaluate: `:test`'s `:main-opts` hand the arguments
 to the test runner, which reads `-e` as `--exclude` and runs the tests as usual — the form

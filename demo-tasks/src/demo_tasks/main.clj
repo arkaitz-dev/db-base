@@ -22,17 +22,12 @@
 
 (defn config
   "The system map, with `port` overriding the one in the resource when given.
-
-  **Two values move together**, which the first demo in this repository never
-  had to care about: the port the server listens on, and the origin the sign-in
-  link is built from. auth-base validates the shape of `:base-url` and has no
-  way to check it against a server it knows nothing about, so a port given here
-  and not there would print links to a door nobody is standing at."
+  The server and the sign-in link both read `:demo-tasks/port`, so this is the
+  only value that moves."
   ([] (config nil))
   ([port]
    (cond-> (wbi/read-string (config/env-file-readers env-file) (slurp (io/resource "config.edn")))
-     port (-> (assoc-in [:dev.arkaitz.web-base/server :port] port)
-              (assoc-in [:demo-tasks/auth-config :base-url] (str "http://localhost:" port))))))
+     port (assoc :demo-tasks/port port))))
 
 (defn -main [& [port]]
   (let [parsed (some-> port parse-long)]

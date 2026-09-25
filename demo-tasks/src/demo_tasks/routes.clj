@@ -6,11 +6,11 @@
   brings no reitit dependency to do it — so the host nests them under its own
   layout beside its own routes. Neither library knows the other exists; this
   vector is the whole of the meeting."
-  (:require [demo-tasks.accounts :as accounts]
-            [demo-tasks.devices :as devices]
+  (:require [demo-tasks.devices :as devices]
             [demo-tasks.tasks :as tasks]
             [demo-tasks.views :as views]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.response :as response]
@@ -30,7 +30,7 @@
   (let [subject (:wb/subject request)]
     (devices/seen! db subject (:session/key request) (get-in request [:headers "user-agent"]))
     (response/ok (views/tasks-page request
-                                   (accounts/identifier-for db subject)
+                                   (auth-jdbc/identifier-for (:datasource db) subject)
                                    (tasks/list-tasks db subject)))))
 
 (defn- sessions

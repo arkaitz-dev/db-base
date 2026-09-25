@@ -32,9 +32,9 @@
 
 (defn login
   "The one view auth-base asks this host for. It is handed the request and one
-  of three states and returns Hiccup, without auth-base knowing that web-base
+  of four states and returns Hiccup, without auth-base knowing that web-base
   or this layout exist."
-  [request {:keys [sent? spent?]}]
+  [request {:keys [sent? spent? limited?]}]
   (list
    [:h2 "Sign in"]
    (when sent?
@@ -42,6 +42,8 @@
       " In this demo the link is printed to the server's console."])
    (when spent?
      [:p.error [:strong "That link no longer works."] " It is good once, and it expires."])
+   (when limited?
+     [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
    [:form {:method "post" :action "/login"}
     (security/csrf-field request)
     [:label "Email address "

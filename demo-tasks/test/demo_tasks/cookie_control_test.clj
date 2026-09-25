@@ -16,7 +16,7 @@
   positively rather than left as an absence."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [demo-tasks.support :as support :refer [GET POST browser location session-key-of sign-in!]]
+            [demo-tasks.support :as support :refer [GET POST browser landed session-key-of sign-in!]]
             [demo-tasks.system]
             [dev.arkaitz.web-base :as wb]
             [integrant.core :as ig]))
@@ -74,10 +74,10 @@
     (let [here (browser) there (browser)]
       (sign-in! app path here "ada@example.test")
       (sign-in! app path there "ada@example.test")
-      (is (= 200 (:status (GET app there "/")))
+      (is (= [200 "/"] (landed app there "/"))
           "precondition: the second browser is signed in")
       (POST app here "/revoke" {})
-      (is (= "/login" (location (GET app there "/")))
+      (is (= [200 "/login"] (landed app there "/"))
           (str "and revoking ends it at its next request, with the session sealed in its own"
                " browser and no server anywhere holding a copy"))
       (is (= [[1]] (support/rows path "SELECT generation FROM account_generation"))
@@ -95,11 +95,11 @@
       (sign-in! app path there "ada@example.test")
       (let [other (session-key-of there)]
         (is (some? other) "precondition: the other browser is holding a session cookie")
-        (is (= 200 (:status (GET app there "/")))
+        (is (= [200 "/"] (landed app there "/"))
             "precondition: and it works")
         (GET app here "/sessions")
         (POST app here (str "/sessions/" other "/end") {})
-        (is (= 200 (:status (GET app there "/")))
+        (is (= [200 "/"] (landed app there "/"))
             (str "STILL signed in. This is the assertion the seam test's is measured against:"
                  " the same call that ends a row cannot end a sealed value, so a green here"
                  " and a red there is the difference db-base §8 exists to make"))))))
