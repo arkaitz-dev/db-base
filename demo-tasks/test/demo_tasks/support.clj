@@ -4,17 +4,18 @@
 
   **The second connection is the point.** A test that verifies a write by
   calling the function that performed it is asking the same code twice and
-  believing it the second time. Everything below reads with next.jdbc against a
-  datasource of the test's own, so what it observes is what another process
+  believing it the second time. Everything below reads through db-base's
+  `testing/rows`, over a connection of the test's own opened from the same
+  configuration the host boots with, so what it observes is what another process
   would see."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [dev.arkaitz.db-base :as db]
+            [dev.arkaitz.db-base.testing :as dbt]
             [dev.arkaitz.web-base.integrant :as wbi]
             [dev.arkaitz.web-base.testing :as wt]
             [integrant.core :as ig]
             [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs]
             [ring.mock.request :as mock]))
 
 (defn temp-db-path []
@@ -53,14 +54,17 @@
    :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
    :sessions   {:lock-wait-ms 5000}})
 
-(defn datasource [path] (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path pragmas)}))
+(defn datasource
+  "For the writes a test plants itself, which db-base's reader does not do."
+  [path]
+  (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path pragmas)}))
 
 (defn rows
   "Every row of `sql`, as vectors, through a connection of the test's own."
   [path sql & params]
-  (vec (rest (jdbc/execute! (datasource path) (into [sql] params) {:builder-fn rs/as-arrays}))))
+  (apply dbt/rows (config path) sql params))
 
-(defn one [path sql & params] (ffirst (apply rows path sql params)))
+(defn one [path sql & params] (apply dbt/one (config path) sql params))
 
 (defn with-db*
   "Boots the host's database over a temporary file, hands the handle and the

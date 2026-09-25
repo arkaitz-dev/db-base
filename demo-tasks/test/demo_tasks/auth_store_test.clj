@@ -8,8 +8,12 @@
   it. But two threads and a barrier are not enough either: SQLite serialises
   writers at the file, so a broken implementation can pass that test every time
   on this machine. What this suite does instead is **suspend one caller between
-  its statements, above the driver**, by handing the store a `DataSource` whose
-  connections park on the first DELETE they are asked to prepare. The other
+  its statements, above the driver**, by handing the store db-base's
+  `testing/parking` handle, which parks the first DELETE any of its connections
+  is asked to prepare. It began as a harness written here, and moved into the
+  library once it had proved itself; what it adds over that first version is
+  `:exit`, which says whether the suspension was ended by the test or ran out on
+  its own, and a driver's exceptions arriving as themselves. The other
   caller then runs to completion in a window that is chosen rather than hoped
   for, and the outcome is the same on every run and every engine.
 
@@ -22,49 +26,19 @@
             [demo-tasks.auth-store :as auth-store]
             [demo-tasks.support :as support :refer [with-db]]
             [dev.arkaitz.auth-base.store :as store]
+            [dev.arkaitz.db-base.testing :as dbt]
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs])
-  (:import [clojure.lang ExceptionInfo]
-           [java.lang.reflect InvocationHandler Method Proxy]
-           [java.util.concurrent CountDownLatch TimeUnit]
-           [java.util.concurrent.atomic AtomicBoolean]
-           [javax.sql DataSource]))
+  (:import [clojure.lang ExceptionInfo]))
 
 (def ^:private ada "ada@example.test")
 (def ^:private a-token (apply str (repeat 43 "A")))
 
 ;; --- the harness ----------------------------------------------------------
 
-(defn- proxying
-  "`iface`, with every call handed to `f` as [method args]."
-  [^Class iface f]
-  (Proxy/newProxyInstance
-   (.getClassLoader iface) (into-array Class [iface])
-   (reify InvocationHandler
-     (invoke [_ _proxy method args] (f method args)))))
-
-(defn- forward [^Method m target args]
-  (.invoke m target (object-array (or args []))))
-
-(defn- parking-datasource
-  "`real`, except that the FIRST connection asked to prepare a DELETE blocks
-  until `released` counts down, and announces it by counting `parked` down.
-  Only the first: the caller that is meant to run through must not park too."
-  [^DataSource real ^CountDownLatch parked ^CountDownLatch released]
-  (let [fired (AtomicBoolean. false)]
-    (proxying DataSource
-              (fn [^Method m args]
-                (if (= "getConnection" (.getName m))
-                  (let [connection (forward m real args)]
-                    (proxying java.sql.Connection
-                              (fn [^Method cm cargs]
-                                (when (and (= "prepareStatement" (.getName cm))
-                                           (re-find #"(?i)^\s*delete" (str (first cargs)))
-                                           (.compareAndSet fired false true))
-                                  (.countDown parked)
-                                  (.await released 20 TimeUnit/SECONDS))
-                                (forward cm connection cargs))))
-                  (forward m real args))))))
+(def ^:private a-delete
+  "What the harness parks on: the first statement that deletes, however it is spelt."
+  #(re-find #"(?i)^\s*delete" %))
 
 (defn- naive-store
   "A store that decides from its read: it selects, deletes, and returns what the
@@ -86,29 +60,38 @@
 
 (defn- race-one-take
   "Plants a challenge, suspends one caller inside its take, lets another finish,
-  then releases the first. Answers `{:winners [...] :threw [...] :intercepted?
-  bool :parked-in-time? bool}` — every outcome named separately, so a failure
-  says which of them happened."
+  then releases the first. Answers `{:winners [...] :threw [...] :parked-in-time?
+  bool :exit kw :slow-returned? bool :rows-left n}` — every outcome named
+  separately, so a failure says which of them happened. `:winners` counts only
+  callers that came back, so `:slow-returned?` is what keeps a caller that never
+  returns from reading as one that lost. `:exit` is how the suspension ended, and only
+  `:released` means the window was the one this builds: a guard that ran out
+  first would have let the callers take any order at all."
   [db path make-store]
   (store/put-challenge! (auth-store/store db) a-token ada 9999999999999)
-  (let [parked   (CountDownLatch. 1)
-        released (CountDownLatch. 1)
-        slow     (make-store (assoc db :datasource (parking-datasource (:datasource db) parked released)))
+  (let [{:keys [arrived release! exit] parked :handle} (dbt/parking db a-delete 20000)
+        slow     (make-store parked)
         fast     (make-store db)
         results  (atom [])
         thrown   (atom [])
         runner   (fn [store]
                    (try (swap! results conj (store/take-challenge! store a-token))
                         (catch Throwable t (swap! thrown conj t))))
-        a        (doto (Thread. #(runner slow)) (.start))]
-    (let [in-time? (.await parked 20 TimeUnit/SECONDS)]
-      (when in-time? (runner fast))
-      (.countDown released)
-      (.join a 30000)
-      {:winners        (vec (remove nil? @results))
-       :threw          @thrown
-       :parked-in-time? in-time?
-       :rows-left      (count (support/rows path "SELECT token FROM login_challenge WHERE token = ?" a-token))})))
+        ;; A daemon, so a caller that never returns is a red below and not a test
+        ;; run that cannot exit.
+        a        (doto (Thread. #(runner slow)) (.setDaemon true) (.start))]
+    (try
+      (let [in-time? (not= ::hang (deref arrived 20000 ::hang))]
+        (when in-time? (runner fast))
+        (release!)
+        (.join a 30000)
+        {:slow-returned?  (not (.isAlive a))
+         :winners         (vec (remove nil? @results))
+         :threw           @thrown
+         :parked-in-time? in-time?
+         :exit            (deref exit 5000 ::hang)
+         :rows-left       (count (support/rows path "SELECT token FROM login_challenge WHERE token = ?" a-token))})
+      (finally (release!)))))
 
 ;; --- the property ---------------------------------------------------------
 
@@ -118,7 +101,8 @@
         (str "precondition: the journal is WAL — under the default rollback journal the"
              " suspended caller below would block the other one and this test would"
              " deadlock into its own hang guard instead of interleaving"))
-    (let [{:keys [winners threw parked-in-time? rows-left]} (race-one-take db path auth-store/store)]
+    (let [{:keys [winners threw parked-in-time? exit slow-returned? rows-left]}
+          (race-one-take db path auth-store/store)]
       (is (= [] threw)
           (str "neither caller threw, so a nil below is a caller that lost and never an"
                " exception wearing its clothes: " (pr-str (mapv ex-message threw))))
@@ -126,6 +110,13 @@
           (str "the harness intercepted a DELETE and suspended a caller — if the statement"
                " is ever rewritten so this regex stops matching, THIS is the assertion that"
                " says so, instead of the whole test passing over nothing for ever"))
+      (is (= :released exit)
+          (str "and the suspension ended because the test released it, after the other"
+               " caller had finished — a guard that ran out first means the order below"
+               " was not the one this test claims"))
+      (is (true? slow-returned?)
+          (str "and the suspended caller came back once released — one that hangs would"
+               " otherwise look like the caller that lost, and losing must answer nil"))
       (is (= 1 (count winners))
           (str "exactly one caller was handed the row: " (pr-str winners)))
       (is (= {:ab/identifier ada :ab/expires-at 9999999999999} (first winners))
@@ -138,8 +129,10 @@
   ;; intercepted nothing, a thread that never ran, a barrier that quietly
   ;; deadlocked would all look exactly like success.
   (with-db [db path]
-    (let [{:keys [winners parked-in-time?]} (race-one-take db path naive-store)]
+    (let [{:keys [winners parked-in-time? exit slow-returned?]} (race-one-take db path naive-store)]
       (is parked-in-time? "the harness suspended a caller here too")
+      (is (= :released exit) "and released it only after the other caller finished")
+      (is (true? slow-returned?) "and it came back")
       (is (= 2 (count winners))
           (str "and a store that decides from its read hands the SAME row to both callers — "
                "which is what makes the single winner above an observation rather than a hope: "
