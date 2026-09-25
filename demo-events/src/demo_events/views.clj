@@ -17,11 +17,12 @@
                 [:button {:type "submit"} "Log out"]]
                [:span "not signed in"])}))
 
-(defn login [request {:keys [sent? spent?]}]
+(defn login [request {:keys [sent? spent? limited?]}]
   (list
    [:h2 "Sign in"]
    (when sent? [:p.ok [:strong "A link is on its way."] " In this demo it is printed to the server's console."])
    (when spent? [:p.error [:strong "That link no longer works."]])
+   (when limited? [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
    [:form {:method "post" :action "/login"}
     (security/csrf-field request)
     [:label "Email address "
@@ -32,7 +33,10 @@
   (into [:form {:method "post" :action action :style "display:inline"}]
         (cons (security/csrf-field request) body)))
 
-(defn home [request identifier events error]
+(defn home
+  "`form` is what `wb/rerender` hands a refused event back with — the values typed
+  and the fields refused — or nil on an ordinary visit."
+  [request identifier events {:keys [values errors]}]
   (list
    [:p "Signed in as " [:strong identifier] "."]
    [:h2 "Upcoming"]
@@ -44,11 +48,13 @@
          (when mine (str " · you: " mine))])]
      [:p [:em "Nothing planned."]])
    [:h2 "New event"]
-   (when (= "event" error) [:p.error "A title and a capacity from 1 to 1000 are needed."])
+   (when (contains? errors :event) [:p.error "A title and a capacity from 1 to 1000 are needed."])
    (post-form request "/events"
-              [:label "Title " [:input {:type "text" :name "title" :maxlength "120" :required true}]]
+              [:label "Title " [:input {:type "text" :name "title" :maxlength "120" :required true
+                                       :value (:title values)}]]
               " "
-              [:label "Places " [:input {:type "number" :name "capacity" :min "1" :max "1000" :required true}]]
+              [:label "Places " [:input {:type "number" :name "capacity" :min "1" :max "1000" :required true
+                                        :value (:capacity values)}]]
               " " [:button {:type "submit"} "Create"])))
 
 (defn event-page [request {:keys [id title capacity going]} attendees mine owner?]

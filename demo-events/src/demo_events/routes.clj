@@ -1,10 +1,10 @@
 (ns demo-events.routes
   "Where the three libraries meet: auth-base's routes, this host's, one layout."
   (:require [clojure.string :as str]
-            [demo-events.accounts :as accounts]
             [demo-events.events :as events]
             [demo-events.views :as views]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.error :as error]
@@ -18,8 +18,8 @@
 
 (defn- home [db request]
   (let [s (subject request)]
-    (response/ok (views/home request (accounts/identifier-for db s) (events/upcoming db s)
-                             (get-in request [:params "error"])))))
+    (response/ok (views/home request (auth-jdbc/identifier-for (:datasource db) s) (events/upcoming db s)
+                             (:wb/form request)))))
 
 (defn- create-event [db request]
   (let [title    (param request "title")
@@ -27,7 +27,11 @@
     (if (and title capacity (<= 1 capacity 1000))
       (response/see-other (str "/events/" (events/create-event! db (subject request) title capacity
                                                                 (System/currentTimeMillis))))
-      (response/see-other "/?error=event"))))
+      ;; Home again, with what was typed and why — a 422 at this URL, where a
+      ;; redirect would have lost the values.
+      (wb/rerender request "/" {:values {:title    (param request "title")
+                                         :capacity (param request "capacity")}
+                                :errors #{:event}}))))
 
 (defn- event-page [db request]
   (let [s  (subject request)

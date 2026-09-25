@@ -16,16 +16,16 @@
   in one millisecond fall back to the subject, a random UUID. The planted order is the
   reverse of the subjects' order, so a query that sorted by subject would be caught."
   (:require [clojure.test :refer [deftest is testing]]
-            [demo-events.accounts :as accounts]
             [demo-events.events :as events]
             [demo-events.support :as support :refer [with-db]]
+            [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]
             [next.jdbc :as jdbc])
   (:import [java.sql SQLException]))
 
 (defn- people [db n]
-  (vec (for [i (range n)] (accounts/register! db (str "p" i "@example.test")))))
+  (vec (for [i (range n)] (auth-jdbc/register! (:datasource db) (str "p" i "@example.test")))))
 
 (defn- plant-order!
   "Gives `subjects`' answers to `ev` ascending join times in the reverse of their
@@ -121,7 +121,7 @@
           soon    (events/create-event! db a "Soon" 1 100)]
       (mapv #(events/join! db % late) [a b c])
       (events/join! db b soon)
-      (let [who     #(accounts/identifier-for db %)
+      (let [who     #(auth-jdbc/identifier-for (:datasource db) %)
             [w1 w2] (plant-order! path late [b c])]
         (is (= [[(who a) "going"] [(who w1) "waiting"] [(who w2) "waiting"]]
                (mapv (juxt :identifier :status) (events/attendees db late)))
@@ -131,7 +131,7 @@
           (str "upcoming for p1: soonest first, one row per event, each with its own waiting count"
                " and what p1 answered to it"))
       (is (= [["Soon" nil] ["Late" nil]]
-             (mapv (juxt :title :mine) (events/upcoming db (accounts/register! db "nobody@example.test"))))
+             (mapv (juxt :title :mine) (events/upcoming db (auth-jdbc/register! (:datasource db) "nobody@example.test"))))
           "and somebody who answered nothing sees every event once, answering nothing"))))
 
 (deftest a-read-then-write-outside-a-transaction-over-books-and-join-does-not
