@@ -747,11 +747,10 @@ web-base and is wired the way web-base is — asked.)
 
 **Open**
 
-- **Whether `testing` earns a second consumer.** Its parker was written by one host;
-  the helpers both hosts share — a temporary SQLite file, a boot and teardown around
-  it — are the ones §5 forbids shipping. If no second host's tests reach for it, it is
-  one host's code maintained here, which is web-base §7's warning about a base built
-  for one. (Opened 2026-09-25; the list had been empty since 2026-09-21.)
+- ~~**Whether `testing` earns a second consumer**~~: **settled — it earned two**, the
+  same day it was asked. `demo-ledger` and `demo-events` reached for `rows` and
+  `parking` without being told to (`FRICTION.md`, "Evidence that answers an open
+  question"), so it is no longer one host's code maintained here.
 
 - ~~**Reclaiming expired rows**~~: **settled — a function the operator calls**, and
   nothing else. Not on write: that is a second statement on every request that touches a
@@ -969,8 +968,9 @@ tests did, and only in part**, and that is the sentence to weigh them by.
   what §10's new *Out* sentence holds it to. `take-lock-row!` did **not** move onto it:
   there a collision means wait, and the holder is read once when the wait runs out.
 - **`testing`**'s parker was written by one host, not two. What both hosts share is a
-  temporary database file, which cannot ship. §11 carries that as an open question
-  rather than a settled one.
+  temporary database file, which cannot ship. §11 carried that as an open question
+  rather than a settled one — and settled it the same day, when two more hosts reached
+  for `rows` and `parking` unprompted.
 
 **What moving them found**, which is the evidence either way:
 

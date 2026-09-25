@@ -200,6 +200,41 @@ It makes no temporary database: that is a file, and this library reads none.
   and no clause one family takes and another refuses. The suite's own dialect table, in
   `test/dev/arkaitz/db_base/dialect_test.clj`, says which engine refuses which form.
 
+## Running it in production
+
+Three things to wire, and all three are yours to schedule, because a library that started
+threads would be a lifecycle you did not ask for (`SPEC.md` §9).
+
+- **Health.** `(db/ready? handle 2)` borrows a connection and asks the driver whether it
+  is valid, within the seconds you give it — as far as the driver honours them; pgjdbc
+  does, H2 over TCP does not (`SPEC.md` §6).
+- **Load.** `(db/pool-stats handle)` answers `{:active :idle :total :waiting}` from
+  HikariCP's counters. `:waiting` above zero for long means the pool is exhausted, not
+  that the database is slow; `:total` climbs to `[:pool :max]` on its own after `start`.
+  It refuses a stopped pool rather than reporting its zeros.
+- **Reclaiming sessions.** Expired session rows are already invisible — the expiry is in
+  every read — so reclaiming is about disk, and nothing does it unless you call
+  `session/reclaim-expired!`. Call it from a scheduler your host owns, and stop that
+  scheduler before `db/stop`:
+
+  ```clojure
+  (import '[java.util.concurrent Executors TimeUnit])
+
+  (def sweeper (Executors/newSingleThreadScheduledExecutor))
+  (.scheduleWithFixedDelay sweeper
+                           #(try (println "reclaimed" (session/reclaim-expired! handle))
+                                 (catch Exception e (println "reclaim failed:" (ex-message e))))
+                           0 1 TimeUnit/HOURS)
+  ;; and on the way down, before db/stop:
+  (.shutdown sweeper)
+  (.awaitTermination sweeper 10 TimeUnit/SECONDS)
+  ```
+
+  Hourly is plenty for a table that only ever needs to stop growing; a cron job running a
+  one-shot command does the same. The count it returns is how many sessions expired
+  unread since the last sweep, which on a public site is mostly visitors who never signed
+  in.
+
 ## What it will not do
 
 - **Read a file nobody named.** Configuration arrives as a map. The connection details,
