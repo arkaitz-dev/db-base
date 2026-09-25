@@ -540,6 +540,42 @@
           (str engine ": and deleted neither the row taken after the repair nor another"
                " control table's")))))
 
+(deftest a-boot-that-fails-gives-back-its-own-lock-row-and-no-other
+  ;; The failure path's twin of the test above. A boot that dies at a migration releases
+  ;; through `release-after-failure!`, and that release has to be scoped to its own holder
+  ;; as tightly as the success path's: an operator who took this boot for dead ran the
+  ;; repair, a second instance holds the same id now, and the first one's failure must
+  ;; not take that lock away from under it. The second row is planted rather than taken
+  ;; by a live boot — the migration gate is one per JVM — which is all a DELETE can tell
+  ;; apart anyway: a row, an id and a holder.
+  (doseq [[engine url] (ts/engines)]
+    (fns/reset-gate!)
+    (let [[_ run] (ts/running #(ts/boot (ts/config url "gated-failing")))]
+      (is (= true (deref @fns/arrived 20000 ::never))
+          (str engine ": precondition: the boot is inside a migration, holding the lock"))
+      (is (= 1 (count (ts/lock-rows url)))
+          (str engine ": precondition: its row is there for another connection to read"))
+      (ts/execute! url "DELETE FROM db_base_migration_lock WHERE id = 'ragtime_migrations'")
+      (ts/execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                         " VALUES ('ragtime_migrations', 'TOOK-IT-AFTER-THE-REPAIR', 1700000000001)"))
+      (ts/execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                         " VALUES ('other_migrations', 'ANOTHER-CONTROL-TABLE', 1700000000002)"))
+      (let [planted (sort-by first (ts/lock-rows url))]
+        (is (= 2 (count planted)) (str engine ": witness: both rows are there before the boot is let go"))
+        (deliver @fns/release true)
+        (let [result      (deref run 30000 ::hang)
+              [outcome e] (when (vector? result) result)]
+          (is (not= ::hang result) (str engine ": the boot came back"))
+          ;; The gate's own bound would also let the boot go, and after that its release
+          ;; would run before the rows above were planted — green whatever it deletes.
+          (is (true? @fns/gate-exit) (str engine ": witness: released by the test, not by the gate's bound"))
+          (is (= :threw outcome) (str engine ": the boot fails"))
+          (is (= (refused "gated-failing" "migration 002-b failed" "002-b") (ts/pair e))
+              (str engine ": at 002-b, so it was the failure path's release that ran"))
+          (is (= planted (sort-by first (ts/lock-rows url)))
+              (str engine ": and it deleted neither the row taken after the repair nor another"
+                   " control table's")))))))
+
 (deftest a-lock-that-cannot-be-given-back-stops-the-boot-after-the-migrations-applied
   (doseq [[engine url] (ts/engines)]
     (fns/reset-gate!)

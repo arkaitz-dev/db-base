@@ -182,16 +182,13 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       `35a7e85`). Also closed there: §11's open row, whether `testing` earns a second
       consumer — it earned two.
 
-- [ ] **§7's lock release is scoped by holder, and nothing pins that scoping.** Found by
-      the §8 panel on 2026-09-21, unanimous across four lenses. `release-lock!` deletes
-      `WHERE id = ? AND holder = ?`; drop either predicate and both suites stay green,
-      because no test ever constructs the case the `holder` clause guards — boot A dies
-      holding a row, boot B later takes that same id with a fresh holder, and A's stray
-      release-after-failure deletes B's live row. `a-boot-gives-back-its-own-lock-row-and-no-other`
-      plants two rows but both with foreign holders, so it misses it too. Severity: a
-      cross-instance defect that only shows under a failure path, which is where it would
-      hurt most. Deferred because building it needs a boot that fails *while holding*, and
-      that is §7's suite rather than §8's.
+- [x] **§7's lock release is scoped by holder, and the failure path now proves it**
+      (2026-09-25). The panel of 2026-09-21 was half right: the success path was already
+      pinned by `a-boot-gives-back-its-own-lock-row-and-no-other`, but `release-after-failure!`
+      could delete by id alone, or every row, with the whole suite green.
+      `a-boot-that-fails-gives-back-its-own-lock-row-and-no-other` parks a boot holding the
+      lock, plants the row a second instance would hold after the repair, and lets the first
+      fail at 002-b: both mutants die there and nowhere else.
 
 Two belong to **web-base**, found by building the demo against it and measured
 2026-09-21. Neither is db-base's to fix and both are worth raising there:
