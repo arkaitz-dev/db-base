@@ -222,10 +222,12 @@ host that needed them; the third is untouched:
       writers at the file, and a naive store passes that every time on this machine,
       measured, with the naive store kept as the control that must show two winners.
 
-- [ ] **auth-base's `429` answers `Retry-After: 60` whatever the configured window is**
-      (a literal in its `handlers.clj`); `demo-tasks` sets 15 minutes, so a client that
-      obeys the header retries into the same refusal. Measured 2026-09-25 against the
-      running demo.
+- [x] **auth-base's `429` answered `Retry-After: 60` whatever the configured window
+      was.** Fixed there 2026-09-25 (`026b9fc`, `5f6d867`, `d14a3b7`): the header is now
+      the whole seconds until that source's window reopens, rounded up, and a host's own
+      limiter gets none. Verified in the browser against `demo-tasks`: a refusal a
+      minute into the fifteen-minute window said `840`, exactly the ceiling of what the
+      server log gives.
 
 Two more were opened there in the same work and are recorded above under the second
 consumer: the link scanner that burns a magic link before its recipient clicks it, and
