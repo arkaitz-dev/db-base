@@ -71,7 +71,7 @@
           "ada still has both — ending one place does not end the rest"))))
 
 (deftest an-engine-complaint-that-is-not-a-duplicate-reaches-the-caller
-  ;; `seen!` catches SQLException because arriving again on a session it already
+  ;; `seen!` answers a refused insert because arriving again on a session it already
   ;; knows is the ordinary case, not a failure. A bare catch would read as "the
   ;; row was already there" and mean "the engine said something", turning a
   ;; column that refuses a null, a full disk or a dropped table into a silent
@@ -81,6 +81,39 @@
     (is (thrown? SQLException (devices/seen! db ada "session-one" "Firefox"))
         (str "the complaint reaches the caller, because the row it would name is not"
              " there — which is how this tells a duplicate from everything else"))))
+
+(deftest a-session-recorded-under-another-subject-is-not-accepted-as-this-subjects
+  ;; The session id is the key, so a refused insert says only that SOME row holds
+  ;; it. Answering "already recorded" from the key alone would tell ada her device
+  ;; is listed while her list stays empty. Ada's other session is planted too, so
+  ;; a look by subject alone would find a row and be caught as well.
+  (with-db [db path]
+    (jdbc/execute-one! (support/datasource path)
+                       ["INSERT INTO device (session_id, subject, user_agent, first_seen) VALUES (?, ?, ?, ?)"
+                        "session-one" bob "Chrome" 1])
+    (jdbc/execute-one! (support/datasource path)
+                       ["INSERT INTO device (session_id, subject, user_agent, first_seen) VALUES (?, ?, ?, ?)"
+                        "session-two" ada "Safari" 2])
+    (is (= [["session-one" bob] ["session-two" ada]]
+           (support/rows path "SELECT session_id, subject FROM device ORDER BY session_id"))
+        "precondition: session-one is bob's, and ada has a row of her own elsewhere")
+    (let [e (try (devices/seen! db ada "session-one" "Firefox") nil (catch SQLException e e))]
+      (is (instance? SQLException e)
+          (str "session-one belongs to bob, so seen! for ada must rethrow the refused insert"
+               " rather than read bob's row as hers"))
+      (is (re-find #"device\.session_id" (str (some-> e ex-message)))
+          (str "and what it rethrows is the collision on the session id, not an insert that"
+               " fails for everyone: " (some-> e ex-message)))
+      (is (= [] (some-> e .getSuppressed vec))
+          (str "and the look for her row ran and found nothing — a look that failed would be"
+               " carried here as suppressed")))
+    (is (= [["session-one" bob "Chrome"] ["session-two" ada "Safari"]]
+           (support/rows path "SELECT session_id, subject, user_agent FROM device ORDER BY session_id"))
+        "and nothing changed: bob's row is still bob's")
+    (is (= ::recorded (try (devices/seen! db bob "session-one" "Chrome") ::recorded
+                           (catch SQLException e e)))
+        (str "control: bob arriving again on his own session is the ordinary case and"
+             " passes — so the refusal above is the subject, not a seen! that always throws"))))
 
 (deftest a-long-user-agent-is-cut-rather-than-refused
   ;; The header is whatever a stranger's browser sends, and the column is

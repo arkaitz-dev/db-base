@@ -12,9 +12,9 @@
   every request, and keeps it here. It never reads `db_base_sessions`: that
   table is the library's, and the whole point of this namespace is that the
   feature did not need it."
-  (:require [next.jdbc :as jdbc]
-            [next.jdbc.result-set :as rs])
-  (:import [java.sql SQLException]))
+  (:require [dev.arkaitz.db-base.collision :as collision]
+            [next.jdbc :as jdbc]
+            [next.jdbc.result-set :as rs]))
 
 (defn- ds [db] (:datasource db))
 
@@ -26,26 +26,26 @@
   to the handler."
   [db subject session-id user-agent]
   (when (and subject session-id)
-    (try
-      (jdbc/execute-one! (ds db)
+    ;; Already there, which is every request after the first: the primary key
+    ;; is the arbiter rather than a read before the write, and a refused insert
+    ;; is answered by looking for the row, never by swallowing it. A bare
+    ;; `(catch SQLException _ nil)` reads as "the row already existed" and means
+    ;; "the engine complained about something" — a column refusing a null, a disk
+    ;; with nothing left, a table somebody dropped — all of it turned into a
+    ;; silent no-op on the one path that is supposed to make a person's sessions
+    ;; visible to them.
+    ;;
+    ;; **The look asks for the subject too.** The session id is the key, and a
+    ;; row under that key for somebody else is not this person's device: taking
+    ;; it as one would answer "recorded" while this person's list stays empty.
+    (collision/arbitrate!
+     #(jdbc/execute-one! (ds db)
                          ["INSERT INTO device (session_id, subject, user_agent, first_seen)
                            VALUES (?, ?, ?, ?)"
                           session-id subject (subs (str user-agent) 0 (min 200 (count (str user-agent))))
                           (System/currentTimeMillis)])
-      ;; Already there, which is every request after the first: the primary key
-      ;; is the arbiter rather than a read before the write, for the reason
-      ;; `accounts/register!` gives at more length.
-      ;;
-      ;; **Recognised by re-reading the row, and rethrowing when it is not
-      ;; there.** A bare `(catch SQLException _ nil)` reads as "the row already
-      ;; existed" and means "the engine complained about something" — a column
-      ;; refusing a null, a disk with nothing left, a table somebody dropped —
-      ;; all of it turned into a silent no-op on the one path that is supposed
-      ;; to make a person's sessions visible to them.
-      (catch SQLException e
-        (when-not (seq (jdbc/execute! (ds db) ["SELECT 1 FROM device WHERE session_id = ?"
-                                               session-id]))
-          (throw e))))))
+     #(seq (jdbc/execute! (ds db) ["SELECT 1 FROM device WHERE session_id = ? AND subject = ?"
+                                   session-id subject])))))
 
 (defn list-devices
   "Everywhere `subject` is signed in, oldest first."

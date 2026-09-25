@@ -7,6 +7,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [demo-tasks.accounts :as accounts]
             [demo-tasks.support :as support :refer [with-db]]
+            [dev.arkaitz.db-base.testing :as dbt]
             [next.jdbc :as jdbc])
   (:import [java.sql SQLException]
            [java.util.concurrent Callable CyclicBarrier Executors TimeUnit]))
@@ -55,14 +56,61 @@
     (is (= [["subject-one"]] (support/rows path "SELECT subject FROM account WHERE identifier = ?" ada))
         "and the first row is untouched")))
 
+(deftest a-caller-that-loses-the-race-to-register-is-handed-the-winners-subject
+  ;; The deterministic version of the test below. One caller is suspended at its
+  ;; INSERT — which it reaches only because its read found nothing — while another
+  ;; registers the same address to completion. No other test reaches the branch
+  ;; where the insert is refused: every other call finds the row on its first read.
+  (with-db [db path]
+    (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM account"))
+        (str "precondition: no account yet, so the first caller's read must miss and a"
+             " failure to arrive below is the park or the statement, never a row already there"))
+    (let [{:keys [arrived release! exit] parked :handle}
+          (dbt/parking db #(re-find #"^INSERT INTO account " %) 10000)
+          [_ loser] (let [result (promise)]
+                      [(doto (Thread. #(deliver result (try [:ok (accounts/register! parked ada)]
+                                                            (catch Throwable t [:threw t]))))
+                         (.setDaemon true)
+                         (.start))
+                       result])]
+      (try
+        (is (re-find #"^INSERT INTO account " (str (deref arrived 5000 ::hang)))
+            (str "the first caller read, found nothing, and was suspended at its insert — the"
+                 " only way into the branch this test is about"))
+        (let [winner (accounts/register! db ada)]
+          (is (false? (realized? exit))
+              "the second caller registered while the first was still suspended")
+          (release!)
+          (is (= :released (deref exit 5000 ::hang)) "and the suspension ended by release")
+          (is (= [:ok winner] (deref loser 5000 [::hang]))
+              (str "the caller whose insert was refused is handed the winner's subject — not"
+                   " the value it minted, and not the engine's refusal"))
+          (is (= [[winner]] (support/rows path "SELECT subject FROM account WHERE identifier = ?" ada))
+              "and the one account there is the winner's")
+          (is (= [[1]] (support/rows path "SELECT COUNT(*) FROM account"))
+              "one account in all: the value the loser minted appears nowhere"))
+        (finally (release!))))))
+
+(deftest an-insert-the-engine-refuses-for-another-reason-reaches-the-caller-and-creates-nobody
+  ;; The other half of the race above: a refused insert with no account there to
+  ;; find. Handing back a subject anyway would give `:on-unknown` somebody with no
+  ;; row, and auth-base would freeze that ghost into a session. A null address is
+  ;; the refusal nothing upstream stops, since `subject-for` of nil finds nothing.
+  (with-db [db path]
+    (is (thrown? SQLException (accounts/register! db nil))
+        "the engine's refusal of a null address reaches the caller")
+    (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM account"))
+        "and no account exists")
+    (is (string? (accounts/register! db ada))
+        "control: the same path with an address registers, so the refusal above is the null")))
+
 (deftest registering-concurrently-still-yields-one-account
   ;; **Exploratory, and its green is not a proof.** SQLite serialises writers at
   ;; the file, so this may never interleave the read and the insert that
   ;; `register!` puts between the barrier and the constraint — a broken
   ;; implementation could pass it every time on this machine. It earns its place
   ;; as a net for interleavings nobody enumerated; the deterministic version,
-  ;; which parks one caller between its two statements, is in the store's own
-  ;; suite where that harness lives.
+  ;; which parks one caller between its two statements, is the test above.
   (with-db [db path]
     (let [threads 8
           barrier (CyclicBarrier. threads)

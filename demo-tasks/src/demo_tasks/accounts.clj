@@ -14,7 +14,8 @@
   `subject-for` answers. Two different values would mean a session no revocation
   could ever end. So both return the bare subject string and nothing decorated
   with it."
-  (:require [next.jdbc :as jdbc]
+  (:require [dev.arkaitz.db-base.collision :as collision]
+            [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs])
   (:import [java.sql SQLException]))
 
@@ -40,12 +41,13 @@
   Safe to call concurrently for the same address: the UNIQUE index is the
   arbiter, not the read before it.
 
-  The read first, then an insert, then — if the insert collided — the read
-  again. The collision is recognised by **re-reading the row rather than by its
-  SQLSTATE**, which is not portable: SQLite leaves it null where PostgreSQL says
-  23505. db-base's own migration lock is written the same way for the same
-  measured reason, and this is the third place in this codebase that shape has
-  been needed.
+  The read first, then an insert through db-base's `arbitrate!`, which answers a
+  refused insert by reading again rather than by its SQLSTATE — not portable:
+  SQLite leaves it null where PostgreSQL says 23505. **The re-read asks by
+  identifier alone, and that is the whole row that makes an account the
+  caller's**: the subject is minted here, so a caller that lost the race has no
+  claim on its own minted value, only on the address, and the winner's subject
+  is the right answer.
 
   **Which half is load-bearing, measured rather than assumed.** Delete the first
   read and this still behaves identically — every caller mints, collides, and is
@@ -57,16 +59,15 @@
   [db identifier]
   (or (subject-for db identifier)
       (let [minted (str (random-uuid))]
-        (try
-          (one db "INSERT INTO account (subject, identifier, created_at) VALUES (?, ?, ?)"
-               minted identifier (System/currentTimeMillis))
-          minted
-          (catch SQLException e
-            (or (subject-for db identifier)
-                ;; The insert failed for something that was not this race, so
-                ;; the caller gets the engine's own complaint rather than a
-                ;; subject invented to make the failure go away.
-                (throw e)))))))
+        (collision/arbitrate!
+         (fn []
+           (one db "INSERT INTO account (subject, identifier, created_at) VALUES (?, ?, ?)"
+                minted identifier (System/currentTimeMillis))
+           minted)
+         ;; Nothing there means the insert failed for something that was not
+         ;; this race, and the caller gets the engine's own complaint rather
+         ;; than a subject invented to make the failure go away.
+         #(subject-for db identifier)))))
 
 (defn generation
   "The subject's revocation generation. A subject with no row is 0 — auth-base
@@ -91,7 +92,13 @@
   row is gone on purpose and putting it back resurrects a revoked session. Here,
   zero rows means this subject has never been revoked, and the revocation must
   create the row or it silently does nothing at all — which is the worst failure
-  available, because the person is told it worked."
+  available, because the person is told it worked.
+
+  **Not through `arbitrate!`, on purpose.** Its fallback here is a second
+  write — update, and insert if nothing was there — and `arbitrate!`'s second
+  function only reads. Assembling this from it would make that shape an idiom
+  of the library, and it is the shape db-base §8 exists to refuse; for this
+  table it is right, so it stays here, written out."
   [db subject]
   (let [bump! #(:generation (one db "UPDATE account_generation SET generation = generation + 1
                                      WHERE subject = ? RETURNING generation" subject))]
