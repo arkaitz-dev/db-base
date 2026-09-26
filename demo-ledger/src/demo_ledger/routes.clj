@@ -99,5 +99,10 @@
              ["/groups/:id/expenses" (gated {:post {:handler (partial add-expense db)}})]
              ["/groups/:id/expenses/:expense/delete" (gated {:post {:handler (partial delete-expense db)}})]
              ["/groups/:id/invitations" (gated {:post {:handler (partial invite db ceremony)}})]
-             ["/invitations/:id/accept" (gated {:post {:handler (partial accept db)}})]])]
-     ["/health" {:get {:handler (partial health db)}}]]))
+             ["/invitations/:id/accept" (gated {:post {:handler (partial accept db)}})]])]]))
+
+(defn sessionless
+  "What web-base answers before the session: a probe must not need one, and with a
+  session in a row it could not get its answer out when the pool was down."
+  [db]
+  {"/health" (partial health db)})

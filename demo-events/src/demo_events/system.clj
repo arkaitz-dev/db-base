@@ -24,7 +24,8 @@
    :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})
 
 (defmethod ig/init-key :demo-events/web-config [_ {:keys [db ceremony session-lifetime-ms secure?]}]
-  {:routes     (routes/routes db ceremony)
+  {:routes      (routes/routes db ceremony)
+   :sessionless (routes/sessionless db)
    :subject-fn (auth/subject-fn ceremony)
    :login-path "/login"
    :session    {:store        (session/store db {:lifetime-ms session-lifetime-ms :readers {}})

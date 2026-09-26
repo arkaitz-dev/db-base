@@ -35,8 +35,7 @@
             [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
             [ring.mock.request :as mock])
-  (:import [clojure.lang ExceptionInfo]
-           [java.sql SQLException]))
+  (:import [clojure.lang ExceptionInfo]))
 
 (defn- config
   "The host's system, over `path` instead of the `demo.db` its resource names. No reader
@@ -392,11 +391,11 @@
       (finally (delete-db! path)))))
 
 (deftest an-anonymous-visit-costs-a-row-and-the-host-can-reclaim-it
-  ;; Two things, and only the second is db-base's. **The cost**: web-base keeps the CSRF
-  ;; token in the session, so a visitor with no cookie leaves a row behind whether or not
-  ;; they ever come back — a health probe included, measured at three probes and three
-  ;; rows. That is web-base's to change and it is written in the records, not pinned here,
-  ;; because a test that reds when someone FIXES the waste is a red naming no defect.
+  ;; Two things, and only the second is db-base's. **The cost**: a page that renders a
+  ;; form keeps its CSRF token in the session, so a visitor who opens one and never comes
+  ;; back leaves a row. Since web-base 0.4.0 that is the only way: a request that renders
+  ;; no token writes no session, and a health probe reads none — three probes, zero rows,
+  ;; pinned below, where on 2026-09-21 three probes cost three.
   ;; **What is db-base's**, and what nothing else in this suite exercised: the host can
   ;; sweep those rows itself, through the handle it already holds, and §11 records that as
   ;; the only way they ever go.
@@ -407,6 +406,8 @@
             handle (app system)]
         (try
           (is (= 0 (count (session-rows path))) "precondition: nothing stored yet")
+          (dotimes [_ 3] (handle (mock/request :get "/health")))
+          (is (= 0 (count (session-rows path))) "three health probes leave no row")
           (handle (mock/request :get "/"))
           (is (= 1 (count (session-rows path)))
               (str "a visitor who has not even named themselves already costs a row"))
@@ -487,16 +488,12 @@
           "and the file holds exactly that row, read through a connection of this test's own")
       (finally (delete-db! path)))))
 
-(deftest the-health-route-answers-from-ready-even-when-the-seam-cannot-deliver-it
-  ;; Split in two on purpose, because plugging §8 in separated them. **The route's own
-  ;; contract** is still that it answers from `ready?`, and that is tested by calling it —
-  ;; measured 2026-09-21: a `health` that never consults `ready?` survives every request
-  ;; made through the handler, so through the handler is not where this can be seen any
-  ;; more. **The seam's behaviour** is that the answer never leaves: web-base's error
-  ;; handler sits INSIDE its session middleware, and the session write ring-anti-forgery
-  ;; forces on every response throws on a closed pool. The 503 body is a string nobody
-  ;; will see under a server-side store, and the day web-base moves that boundary the
-  ;; second half of this reds — which is the notice that it can be delivered again.
+(deftest the-health-route-answers-from-ready-through-the-whole-stack-with-the-pool-closed
+  ;; Until web-base 0.4.0 the 503 below never left: the route sat inside the session
+  ;; layer, whose read threw on a closed pool before any route ran, so this test pinned
+  ;; the thrown SQLException and said it would red the day that boundary moved. It moved:
+  ;; `/health` is `sessionless` now, answered before the session, and what `ready?`
+  ;; computes reaches the probe.
   (let [path (temp-db-path)]
     (try
       (let [system  (boot path)
@@ -504,21 +501,27 @@
             handler (app system)]
         (is (= [200 "ok"] (health handler))
             "while the pool is open the whole request works, end to end")
-        (ig/halt! system)
+        ;; A probe that carries a session cookie — a browser's, or a monitor that kept
+        ;; one — is what tells the sessionless mount from a route: behind the session
+        ;; layer its cookie makes the store read, and on a closed pool that read throws
+        ;; before any route runs. A probe with no cookie reads nothing either way.
+        (let [cookie (cookie-of (handler (mock/request :get "/")))]
+          (is (some? cookie) "precondition: the home page gave this visitor a session")
+          (ig/halt! system)
+          (let [probe (handler (carrying (mock/request :get "/health") cookie))]
+            (is (= [503 "the database is not answering"] [(:status probe) (:body probe)])
+                (str "a probe carrying a session cookie gets the 503 with the pool closed —"
+                     " it never touched the session layer, whose read would have thrown"))))
         (is (= [503 "the database is not answering"]
                ((juxt :status :body) (handlers/health db (mock/request :get "/health"))))
-            (str "and the ROUTE still answers from `ready?` with the pool closed — asked of"
-                 " the handler function directly, because that is the only place it can now"
-                 " be observed. `ready?` answers false for a borrow that fails rather than"
-                 " throwing, which is what lets this route exist at all"))
-        (let [thrown (try (health handler) ::no-throw (catch Exception e e))]
-          (is (instance? SQLException thrown)
-              (str "but through the stack the request never delivers it: something on the"
-                   " way out throws first, from outside web-base's error handler"))
-          (is (str/includes? (str (ex-message thrown)) "has been closed")
-              (str "with the pool's own words, which is what an operator sees in the log —"
-                   " not `the database is not answering`, which this host can no longer"
-                   " say"))))
+            (str "and the ROUTE answers from `ready?` with the pool closed — asked of the"
+                 " handler function directly, so a health that never consulted `ready?`"
+                 " cannot pass on a constant. `ready?` answers false for a borrow that fails"
+                 " rather than throwing, which is what lets this route exist at all"))
+        (is (= [503 "the database is not answering"] (health handler))
+            (str "and through the whole stack too: the probe gets the 503, where before it"
+                 " got a SQLException from the session layer and an operator saw a pool"
+                 " error instead of the sentence")))
       (finally (delete-db! path)))))
 
 (deftest a-database-that-cannot-be-reached-stops-the-boot-and-leaves-nothing-listening

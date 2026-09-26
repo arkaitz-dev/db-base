@@ -7,7 +7,8 @@
              :refer [GET POST browser landed posted sign-in! with-host]]
             [demo-events.system]
             [integrant.core :as ig]
-            [next.jdbc :as jdbc]))
+            [next.jdbc :as jdbc]
+            [ring.mock.request]))
 
 (defn- status-of [path ev who]
   (support/one path "SELECT r.status FROM rsvp r JOIN account a ON a.subject = r.subject
@@ -103,3 +104,15 @@
             (str "by a cause naming the missing column: " (mapv ex-message causes)))
         (is (= :demo-events/auth-config (:key (ex-data e))) "at the key that builds the store"))
       (finally (support/delete-db! path)))))
+
+(deftest a-health-probe-leaves-no-session-row
+  ;; A load balancer's probe must not cost a row, which on 2026-09-21 it did — three
+  ;; probes, three rows. Two things in web-base 0.4.0 give this, and a cookieless probe
+  ;; cannot tell them apart: the lazy CSRF token, and `/health` being sessionless. What
+  ;; tells the mount apart — a probe carrying a cookie on a closed pool — is pinned once,
+  ;; in demo/'s seam test; here the claim is the row.
+  (with-host [app path]
+    (let [answers (vec (repeatedly 3 #((juxt :status :body) (app (ring.mock.request/request :get "/health")))))]
+      (is (= (repeat 3 [200 "ok"]) answers) "the probe is answered from the database")
+      (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+          "and leaves no session row behind"))))

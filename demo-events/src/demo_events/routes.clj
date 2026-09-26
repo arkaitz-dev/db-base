@@ -72,5 +72,10 @@
              ["/events/:id" (gated {:get {:handler (partial event-page db)}})]
              ["/events/:id/join" (gated {:post {:handler (partial join db)}})]
              ["/events/:id/leave" (gated {:post {:handler (partial leave db)}})]
-             ["/events/:id/delete" (gated {:post {:handler (partial delete-event db)}})]])]
-     ["/health" {:get {:handler (partial health db)}}]]))
+             ["/events/:id/delete" (gated {:post {:handler (partial delete-event db)}})]])]]))
+
+(defn sessionless
+  "What web-base answers before the session: a probe must not need one, and with a
+  session in a row it could not get its answer out when the pool was down."
+  [db]
+  {"/health" (partial health db)})

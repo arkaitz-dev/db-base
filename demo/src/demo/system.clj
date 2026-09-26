@@ -16,7 +16,8 @@
             [integrant.core :as ig]))
 
 (defmethod ig/init-key :demo/web-config [_ {:keys [db session-lifetime-ms secure?]}]
-  {:routes  (routes/routes db)
+  {:routes      (routes/routes db)
+   :sessionless (routes/sessionless db)
    ;; A store, not a key. Built by a plain function call and NOT by a second Integrant
    ;; key: the store has no lifecycle of its own — the pool it borrows from does, and
    ;; that one is already a component — and §10's "one key, never two" has to survive

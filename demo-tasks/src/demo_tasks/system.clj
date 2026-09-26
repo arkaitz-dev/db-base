@@ -60,7 +60,8 @@
   ;; host constructed the store, so the host holds it; `delete-session` is a
   ;; function of Ring's port and not a door db-base had to open.
   (let [store (session/store db {:lifetime-ms session-lifetime-ms :readers {}})]
-    {:routes     (routes/routes db ceremony store)
+    {:routes      (routes/routes db ceremony store)
+     :sessionless (routes/sessionless db)
      :subject-fn (auth/subject-fn ceremony)
      :login-path "/login"
      ;; A store, not a key: it has no lifecycle of its own — the pool it borrows

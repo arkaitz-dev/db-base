@@ -13,5 +13,10 @@
     ;; own. Not "log out everywhere" — auth-base §10 revokes by generation and works
     ;; with a cookie too, so that would ask db-base for nothing.
     ["/session"     {:post {:handler (partial handlers/sign-in db)}}]
-    ["/session/end" {:post {:handler (partial handlers/end-session db)}}]]
-   ["/health" {:get {:handler (partial handlers/health db)}}]])
+    ["/session/end" {:post {:handler (partial handlers/end-session db)}}]]])
+
+(defn sessionless
+  "What web-base answers before the session: a probe must not need one, and with a
+  session in a row it could not get its answer out when the pool was down."
+  [db]
+  {"/health" (partial handlers/health db)})

@@ -222,8 +222,8 @@
                  " is written, so an unchanged one is a row that was not written"))
         (is (= count- (rows))
             (str "and added no rows either. Not an absolute count: the anonymous visits before"
-                 " the login leave rows of their own, because the CSRF token lives in the"
-                 " session — already on record as web-base's, and not this host's to fix"))))))
+                 " the login render its form and leave rows of their own, because the CSRF token lives in the"
+                 " session — which a page with a form needs, and nothing else pays"))))))
 
 (deftest health-answers-from-the-database-and-not-from-a-constant
   (with-host [app _path]
@@ -268,3 +268,15 @@
         (is (= :demo-tasks/auth-config (:key (ex-data e)))
             "at the key that builds the store, before anything served"))
       (finally (support/delete-db! path)))))
+
+(deftest a-health-probe-leaves-no-session-row
+  ;; A load balancer's probe must not cost a row, which on 2026-09-21 it did — three
+  ;; probes, three rows. Two things in web-base 0.4.0 give this, and a cookieless probe
+  ;; cannot tell them apart: the lazy CSRF token, and `/health` being sessionless. What
+  ;; tells the mount apart — a probe carrying a cookie on a closed pool — is pinned once,
+  ;; in demo/'s seam test; here the claim is the row.
+  (with-host [app path]
+    (let [answers (vec (repeatedly 3 #((juxt :status :body) (app (ring.mock.request/request :get "/health")))))]
+      (is (= (repeat 3 [200 "ok"]) answers) "the probe is answered from the database")
+      (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+          "and leaves no session row behind"))))

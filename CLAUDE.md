@@ -209,19 +209,31 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 Two belong to **web-base**, found by building the demo against it and measured
 2026-09-21. Neither is db-base's to fix and both are worth raising there:
 
-- [ ] **Its error handler sits inside its session middleware.** `web_base.clj` wraps
+- [x] **Its error handler sits inside its session middleware** — **answered
+      2026-09-26 by web-base 0.4.0 (`5a5116d`)**: `/health` is now `:sessionless`,
+      mounted before the session, and every host uses it; `demo`'s seam test sends a
+      probe carrying a session cookie on a closed pool and gets the 503. The boundary
+      itself did not move — a page route still meets the session first — but the
+      route that needed its answer delivered no longer passes through it.
+      Originally: **its error handler sits inside its session middleware.** `web_base.clj` wraps
       `ring-handler` with `error/default-handler` innermost and applies `session/wrap`
       later, so with a server-side store a database that is down makes a request die at
       the adapter instead of reaching the error page. The measured consequence here: the
       demo's `/health` computes a 503 that never leaves, and `ready?` became unobservable
       through the stack — a route that never calls it survives the whole suite.
-- [ ] **Every request without a cookie writes a session row**, because ring-anti-forgery
+- [x] **Every request without a cookie writes a session row** — **fixed 2026-09-26
+      in web-base 0.4.0 (`ce077b0`)**: the CSRF token is written only when a request
+      used it, so a probe, JSON or a redirect writes nothing; only a page that renders
+      a form costs a row. Pinned in every host (`a-health-probe-leaves-no-session-row`).
+      Originally: **every request without a cookie writes a session row**, because ring-anti-forgery
       keeps its token in the session. Three health probes, three rows; a balancer polling
       every five seconds writes seventeen thousand a day, and §8's rows are reclaimed only
       by a function the operator calls. A route that wants no session has no way to say so.
 
 - [ ] **Its stack has no injection point, and 2026-09-22 makes that a pattern rather
-      than an instance.** Two more measured with `demo-tasks`, both the same shape as the
+      than an instance.** (2026-09-26: `:sessionless` covers the one case of a route that
+      must skip the session; `wrap-subject` on every route and `auth/wrap-revoked` still
+      have nowhere to go.) Two more measured with `demo-tasks`, both the same shape as the
       one above: `wrap-subject` runs on **every** route, gated or not, so a page with no
       identity to paint still pays a `generation` read; and `auth/wrap-revoked` cannot be
       used at all, because it must sit *inside* the session middleware to see a session

@@ -145,8 +145,8 @@
                                          (logout request))}}]]))
 
 (defn routes
-  "auth-base's four routes and this host's six, under one layout — plus
-  `/health`, outside it, because a probe wants a status line and not a page."
+  "auth-base's four routes and this host's six, under one layout. `/health` is
+  `sessionless`'s, outside the session: a probe wants a status line, not a page."
   [db ceremony store]
   [["" {:wb/layouts [views/shell-layout]}
     (into (auth-routes db ceremony {:view         views/login
@@ -161,5 +161,10 @@
                                     ;; known user out of their own login by
                                     ;; spending their allowance.
                                     :rate-limit {:limit 5 :window-ms (* 15 60 1000)}})
-          (owned db ceremony store))]
-   ["/health" {:get {:handler (partial health db)}}]])
+          (owned db ceremony store))]])
+
+(defn sessionless
+  "What web-base answers before the session: a probe must not need one, and with a
+  session in a row it could not get its answer out when the pool was down."
+  [db]
+  {"/health" (partial health db)})
