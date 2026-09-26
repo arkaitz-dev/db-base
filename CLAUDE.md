@@ -19,7 +19,9 @@ subject and takes storage as a port; this is what a host plugs into those holes.
 2026-09-13, the migration run 2026-09-19, its lock 2026-09-19, and §3's two-engine
 proof 2026-09-20, §10's Integrant key the same day, §8's session store 2026-09-21, and
 §10's two amendments — `collision/arbitrate!` and the `testing` namespace — 2026-09-25.**
-Everything the specification asks for is written and tested. Every public var of `src`
+Everything the specification asks for is written and tested. **Released as
+`dev.arkaitz/db-base 0.1.0` on Clojars 2026-09-26** (tag `v0.1.0` at `fe535b1`, verified
+from an isolated Maven repo), and the repository is public. Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
@@ -68,7 +70,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.3.0 and auth-base 0.2.0 as releases** (2026-09-25),
+Every host consumes **web-base 0.4.0 and auth-base 0.2.0 as releases** (2026-09-26),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
