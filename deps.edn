@@ -58,6 +58,18 @@
          :main-opts   ["-m" "cognitect.test-runner" "-d" "test"]
          :exec-fn     cognitect.test-runner.api/test}
 
+  ;; The production engine, opt-in (2026-09-25). §3 keeps :test on H2 and SQLite so that
+  ;; nothing PostgreSQL-shaped passes in silence; this is the other half — the library,
+  ;; unmodified, against a real PostgreSQL whose connection is read from pg.local.edn
+  ;; (gitignored). Never on :test, and nothing a consumer receives changes because it
+  ;; exists. It reuses test/'s fixtures and migration functions, not its engines.
+  :pg-test {:extra-paths ["test" "test/resources" "test-pg"]
+            :extra-deps  {io.github.cognitect-labs/test-runner
+                          {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                          org.postgresql/postgresql {:mvn/version "42.7.13"}
+                          ring/ring-core            {:mvn/version "1.15.5"}}
+            :main-opts   ["-m" "cognitect.test-runner" "-d" "test-pg"]}
+
   ;; The host of SPEC §12: a web application that wires this library and web-base, so
   ;; that "does db-base serve a consumer as it stands?" is a question with an answer.
   ;; It lives in aliases and in demo/, never in :paths or :deps: nothing a consumer of

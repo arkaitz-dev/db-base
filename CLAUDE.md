@@ -44,6 +44,20 @@ work**, never from convention. Observed:
     clojure -M:demo-ledger-test
     clojure -M:demo-events [port]          # events with a capacity and a waiting list (3003)
     clojure -M:demo-events-test
+    clojure -M:pg-test                     # the production engine, opt-in: needs the container below
+
+The PostgreSQL suite needs a server and `pg.local.edn` (gitignored) naming it. Observed
+2026-09-26, with Apple's `container` CLI 1.4.1 (Docker is not installed here):
+
+    container system start --enable-kernel-install
+    container run -d --name db-base-pg -e POSTGRES_PASSWORD=<generated> -e POSTGRES_DB=db_base_test \
+      -p 127.0.0.1:55432:5432 docker.io/library/postgres:18.6
+
+and `pg.local.edn` holds `{:jdbc-url "jdbc:postgresql://127.0.0.1:55432/db_base_test"
+:user "postgres" :password "<generated>"}`. Without that file every test there fails
+saying so — a run with nothing to run against is never a pass. Each test works in a
+schema of its own and drops it. Run it before any release: it is the only thing that
+sees what the everyday suite cannot, and it found §8's column on its first run.
 
 **No demo may ever reach `:test`** — `demo/`, `demo-tasks/`, `demo-ledger/`, `demo-events/`: `structure_test`'s logging-backend scan reads
 the running JVM's classpath, and the web stack brings logback. Its own docstring says a
