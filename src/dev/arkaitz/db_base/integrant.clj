@@ -15,12 +15,15 @@
       {:dev.arkaitz.db-base/database
        {:jdbc-url \"jdbc:…\" :user \"…\" :password \"…\"
         :pool {:max 10 :timeout-ms 5000}
-        :migrations {:dir \"db/migration\" :lock-wait-ms 60000}}}
+        :migrations {:dir \"db/migration\" :lock-wait-ms 60000}
+        :sessions {:lock-wait-ms 5000 :dialect :postgresql}}}
 
   and a component that needs the pool refers to it: `#ig/ref :dev.arkaitz.db-base/database`
   hands over the whole handle, whose `:datasource` is the pool and whose
   `:migrations-applied` says what this boot ran — a key that is absent, as §6 has it, when
-  the host asked for `:migrations :none`."
+  the host asked for `:migrations :none`. With `:sessions` it also carries
+  `:session-migrations-applied` and `:session-data-max`, the bound the session store reads;
+  `:dialect` is optional and names an engine whose session table differs (SPEC §8)."
   (:require [dev.arkaitz.db-base :as db]
             [integrant.core :as ig]))
 

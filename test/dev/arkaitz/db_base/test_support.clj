@@ -62,8 +62,13 @@
   §3 promised the second of these would arrive when §8 had code; it has, and §8's own
   column type is the one it protects.
 
-  The leading space is deliberate: without it the token fires on the middle of `CONTEXT`."
-  ["IF NOT EXISTS" " TEXT"])
+  The third is the large-object type PostgreSQL refuses (measured 2026-09-26): both test
+  engines take it, so without this entry §8's column could go back to it with the whole
+  everyday suite green — which is exactly how it shipped the first time.
+
+  The leading spaces are deliberate: without them the tokens fire on the middle of
+  `CONTEXT`, or on a Java class name spelt in prose."
+  ["IF NOT EXISTS" " TEXT" " CLOB"])
 
 (def url-sentinel "URL-SENTINEL-7f3a")
 (def user-sentinel "USER-SENTINEL-7f3a")

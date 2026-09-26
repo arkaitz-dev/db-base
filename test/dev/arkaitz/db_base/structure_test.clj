@@ -832,6 +832,13 @@
 
 (def ^:private dialect-tokens (into ts/dialect-tokens ts/scan-only-tokens))
 
+(def ^:private dialect-exemptions
+  "The one place src may spell an engine's own form: a dialect namespace a host names,
+  and only the token that dialect exists to carry (SPEC §8, 2026-09-26). By file and by
+  token, never by directory: a second dialect, or a second form in this one, is an entry
+  written here with its reason, not something a glob lets in."
+  {"dev/arkaitz/db_base/dialect/postgresql.clj" #{" TEXT"}})
+
 (defn- string-literals
   "Every string a source spells: the `ns` form included, because a docstring is a literal
   and is where someone will justify the upsert §8 forbids, and metadata included, because
@@ -885,6 +892,10 @@
            (dialect-in (str "(ns x) (defn ddl [] (str \"CREATE TABLE IF NOT EXISTS"
                             " db_base_migration_lock (id VARCHAR(64))\"))")))
         "SPEC §7: the form Derby rejects, which both test engines take — the scan is the only place it can be said")
+    (is (= [[" CLOB" "CREATE TABLE db_base_sessions (id VARCHAR(36), data CLOB NOT NULL)"]]
+           (dialect-in (str "(ns x) (def ddl \"CREATE TABLE db_base_sessions (id VARCHAR(36),"
+                            " data CLOB NOT NULL)\")")))
+        "SPEC §8: the type PostgreSQL refuses and both test engines take — found by the opt-in suite, kept by this one")
     (is (= [[" TEXT" "CREATE TABLE db_base_sessions (id VARCHAR(36), data TEXT NOT NULL)"]]
            (dialect-in (str "(ns x) (def ddl \"CREATE TABLE db_base_sessions (id VARCHAR(36),"
                             " data TEXT NOT NULL)\")")))
@@ -902,7 +913,7 @@
     (is (= [] (dialect-in "(ns x) (def p #\"RETURNING\")"))
         "a regular expression is a Pattern, not a string — stated as a control because it is what this scan cannot see"))
   (is (= #{"ON CONFLICT" "RETURNING" "MERGE INTO" "WHEN MATCHED" "LISTEN" "NOTIFY" "jsonb"
-           "IF NOT EXISTS" " TEXT"}
+           "IF NOT EXISTS" " TEXT" " CLOB"}
          (set dialect-tokens))
       (str "every token above has a control of its own, written by hand: adding one to the"
            " shared list means writing its control here, and this is what says so"))
@@ -918,8 +929,14 @@
                                 (boolean (some #(str/includes? % "INSERT INTO ") literals))])
                 (str "precondition: the walk sees the SQL that lives inside function bodies, not"
                      " only docstrings — found " (count literals) " literals"))))
+        (testing "the exemption is exact and not dead"
+          (doseq [[path tokens] dialect-exemptions]
+            (is (= tokens (set (map first (dialect-in (get text path)))))
+                (str path " spells exactly the forms it is exempted for — no fewer, or the"
+                     " exemption is dead, and no more, or it is a door"))))
         (is (= [] (vec (for [[path source] (sort text)
-                             hit           (dialect-in source)]
+                             hit           (dialect-in source)
+                             :when         (not (contains? (get dialect-exemptions path) (first hit)))]
                          (into [path] hit))))
             (str "SPEC §3: src spells a dialect that belongs to one engine family. The only SQL"
                  " of this library's own is §7's lock — a dialect of one engine family (§3),"
@@ -1085,7 +1102,11 @@
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
                                         reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
     dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"
-                                        migrations "SPEC §8: the library's own migration run"}})
+                                        migrations "SPEC §8: the library's own migration run"
+                                        data-max   "SPEC §8: the most a session may hold in the portable table"}
+    ;; 2026-09-26. What PostgreSQL does differently, for a host that names it; a second
+    ;; dialect is a namespace of its own and an entry here.
+    dev.arkaitz.db-base.dialect.postgresql {sessions "SPEC §8: the session table under this dialect, and its bound"}})
 
 (defn- surface-diff
   "What `found` has that `accepted` does not, and the reverse, as a map of the non-empty

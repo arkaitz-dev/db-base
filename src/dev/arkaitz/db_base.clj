@@ -37,6 +37,7 @@
   (:require [clojure.string :as str]
             [ragtime.core :as ragtime]
             [dev.arkaitz.db-base.collision :as collision]
+            [dev.arkaitz.db-base.dialect.postgresql :as postgresql]
             [dev.arkaitz.db-base.session.schema :as schema]
             [ragtime.next-jdbc :as ragtime-jdbc]
             [ragtime.protocols :as ragtime-protocols]
@@ -54,7 +55,20 @@
 
 (def ^:private migrations-keys #{:dir :lock-wait-ms})
 
-(def ^:private sessions-keys #{:lock-wait-ms})
+(def ^:private sessions-keys #{:lock-wait-ms :dialect})
+
+(def ^:private session-dialects
+  "The session schemas a host may name under `[:sessions :dialect]`, each a dialect
+  namespace's own (SPEC §8). Named and never detected: an engine absent from here gets
+  the portable schema, which every engine measured takes."
+  {:postgresql postgresql/sessions})
+
+(defn- session-schema
+  "`{:migrations … :data-max …}` for the dialect `sessions` names, or the portable one."
+  [sessions]
+  (if-let [dialect (:dialect sessions)]
+    (session-dialects dialect)
+    {:migrations schema/migrations :data-max schema/data-max}))
 
 (def ^:private host-migrations-table
   "The host's control table: ragtime's own default, so a host that already used ragtime
@@ -96,9 +110,11 @@
   is at fault, and the key it blames is the one the host wrote to ask for the run at all.
   The phrase reads after \"not found under\", which is the downgrade case — a database
   migrated by a newer db-base and then booted by an older one."
-  [wait-ms]
+  [wait-ms dialect]
   {:table      library-migrations-table
-   :source     "the schema this version of db-base ships"
+   :source     (if dialect
+                 (str "the " dialect " session schema this version of db-base ships")
+                 "the schema this version of db-base ships")
    :blame      [:sessions]
    :wait-blame [:sessions :lock-wait-ms]
    :wait-ms    wait-ms
@@ -187,10 +203,14 @@
       (when-not (integer-between? 0 Integer/MAX_VALUE lock-wait-ms)
         (fail! (str "[:sessions :lock-wait-ms] must be an integer from 0 to " Integer/MAX_VALUE
                     " milliseconds")
-               [:sessions :lock-wait-ms] lock-wait-ms)))
+               [:sessions :lock-wait-ms] lock-wait-ms))
+      (when (and (contains? sessions :dialect) (not (contains? session-dialects (:dialect sessions))))
+        (fail! (str "[:sessions :dialect] must be one of " (pr-str (vec (sort (keys session-dialects))))
+                    ", or absent for the portable schema")
+               [:sessions :dialect] (:dialect sessions))))
 
     :else
-    (fail! ":sessions must be :none or a map of :lock-wait-ms" [:sessions] sessions)))
+    (fail! ":sessions must be :none or a map of :lock-wait-ms and :dialect" [:sessions] sessions)))
 
 (defn- validate! [config]
   (when-not (map? config)
@@ -562,14 +582,17 @@
     :password    string, \"\" included — never defaulted, never generated
     :pool        {:max integer 1..2147483647 :timeout-ms integer 250..2147483646}
     :migrations  :none, or {:dir classpath-prefix :lock-wait-ms integer 0..2147483647}
-    :sessions    :none, or {:lock-wait-ms integer 0..2147483647}
+    :sessions    :none, or {:lock-wait-ms integer 0..2147483647 :dialect :postgresql}
 
   `:sessions` asks for the table §8's session store keeps, and its migration runs
   **before** the host's, into a control table and under a lock row of this library's own,
   so a host schema may already refer to what it creates. The handle then carries
   `:session-migrations-applied`, which counts that run and never the host's; with
   `:sessions :none` nothing is created and the key is absent. A host that never
-  constructs the store has no reason to ask for it.
+  constructs the store has no reason to ask for it. `:dialect` names an engine whose
+  session schema differs from the portable one; it is never detected, and the handle's
+  `:session-data-max` says what the table holds — an integer, or nil for unbounded — so
+  the store refuses a session too long for it before the engine does.
 
   Migration ids sort as strings, so numbers are zero-padded; a `down` never runs.
 
@@ -609,12 +632,15 @@
         ;; already refer to what this one creates, and the two runs must never be able to
         ;; wait for each other (SPEC §8).
         library (when (map? (:sessions config))
-                  (library-run (get-in config [:sessions :lock-wait-ms])))
+                  (library-run (get-in config [:sessions :lock-wait-ms])
+                               (get-in config [:sessions :dialect])))
+        sessions (when library (session-schema (:sessions config)))
         ds      (open-pool config)]
     (try
       (borrow-once! ds (get-in config [:pool :timeout-ms]))
       (cond-> {:datasource ds}
-        library (assoc :session-migrations-applied (migrate! ds library schema/migrations))
+        library (assoc :session-migrations-applied (migrate! ds library (:migrations sessions))
+                       :session-data-max (:data-max sessions))
         source  (assoc :migrations-applied (migrate! ds run source)))
       (catch Throwable t
         (close-after-failure! ds t)

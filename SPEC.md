@@ -63,8 +63,10 @@ tempting engine is the one everybody has in front of them: the suite still runs 
 SQLite, **neither of which is the production engine, on purpose** — a suite that ran on
 PostgreSQL would accept every PostgreSQL-shaped mistake in silence — and the scan below
 still refuses to find `ON CONFLICT`, `RETURNING` or `jsonb` spelled anywhere in `src`,
-all of which PostgreSQL takes happily. §8's types were already chosen by measurement
-across five engines and do not change. The day this library is PostgreSQL-shaped, it has
+all of which PostgreSQL takes happily. §8's types were chosen by measurement across five
+engines — and that measurement had not included PostgreSQL itself, only H2 in its
+PostgreSQL mode: the real engine refused the large-object column, found the day an opt-in
+suite first ran against it (2026-09-26, §8 has the correction). The day this library is PostgreSQL-shaped, it has
 stopped being what §12 argues it barely deserves to be.
 
 **And nearly all of that agnosticism is free.** The pool takes a JDBC URL, the migration
@@ -114,7 +116,9 @@ said to do. Two limits come with it. A mode set on the pool's own path, by one o
 properties §6 records as the host's, is not on this path and is not seen. And what the
 pair cannot see at all is a form both engines accept: a `TEXT` column, and the existence
 clause on `CREATE TABLE` that §7 avoids — HSQLDB and Derby are what refuse those, so §8's
-column types stand on the measurement across five engines rather than on this suite. The
+column types stand on a measurement across five engines rather than on this suite — a
+measurement that has to include the real production engine, as the correction in §8
+shows. The
 source scan names the existence clause, because §7 has code that must not spell it;
 `TEXT` waits for §8 to have any.
 
@@ -552,19 +556,43 @@ answer.** That is what §12 means when it says the decisions are the value.
   store a session that cannot be read back, and will do it quietly.
 
 **The table, and why these types.** One table, **`db_base_sessions`**, written here and
-never generated: `id VARCHAR(36)` as the primary key, `data CLOB`, `expires_at BIGINT` in
+never generated: `id VARCHAR(36)` as the primary key, `data VARCHAR(4000)`, `expires_at BIGINT` in
 epoch milliseconds — auth-base's own convention. That last one is also the ceiling the
 store saturates at rather than summing past: a lifetime with more room than the clock has
 left overflows, and Clojure's `+` throws on that, so a lifetime the constructor accepts
-would otherwise have made every write fail (measured 2026-09-21). Measured on H2, H2 in PostgreSQL mode,
-HSQLDB, Derby and SQLite: this runs on all five. `TEXT` does not; it is
-rejected by HSQLDB and by Derby. `VARCHAR(n)` for the data is worse than it looks — an
-over-long session throws on H2, HSQLDB and Derby, and SQLite takes it without a word: a
-10,000-character value went into a `VARCHAR(8)` and came back whole, measured 2026-09-21
-on sqlite-jdbc 3.53.4.0, which ignores the bound rather than truncating as this section
-first said. Either way **the failure mode itself depends on the engine**, which is the
-argument; and it is why the round trip that pins this type in the suite can only be
-carried by the strict half of §3's pair. `CREATE TABLE IF NOT EXISTS` is not
+would otherwise have made every write fail (measured 2026-09-21).
+
+**Corrected 2026-09-26.** The data column was `CLOB`, measured on H2, H2 in PostgreSQL
+mode, HSQLDB, Derby and SQLite — and refused by PostgreSQL 18.6 itself (`type "clob" does
+not exist`), the day the opt-in suite first ran against the real engine: with sessions on,
+a host on the production engine could not boot. Measured again on PostgreSQL 18.6, H2,
+HSQLDB, Derby and SQLite: `CLOB` is refused by PostgreSQL, `TEXT` by HSQLDB and Derby, and
+a bounded `VARCHAR` is the one type all five take. Its old objection — an over-long
+session throws on most engines and SQLite stores it whole (a 10,000-character value in a
+`VARCHAR(8)`, measured 2026-09-21), so **the failure mode depends on the engine** — is
+answered in Clojure: the store refuses a session longer than the table holds before any
+engine sees it, the same everywhere. The bound, 4000, is twenty times the largest session
+the four hosts wrote (203 characters), counted in UTF-16 units, which never undercounts
+what an engine counts. The round trip that pins the column's width can still only be
+carried by the strict half of §3's pair.
+
+**Dialects, named and never detected.** What an engine does differently lives in a
+namespace named after it, which a host selects with `:sessions {:dialect …}`:
+`dev.arkaitz.db-base.dialect.postgresql` gives the data an unbounded `TEXT`, which a host
+on PostgreSQL may prefer. Every mature layer that meets more than one engine ends with
+one — Rails' adapters, Django's backends, Hibernate's dialects, Liquibase's types, Spring
+Session's per-engine schemas — and this one differs only in that it is chosen by the host:
+an engine nobody named gets the portable table, never a guess. Each dialect's migration
+has an id of its own, so the control table says which table a database has, and naming
+the other one over it is refused by §7 as a history the source does not carry. A database
+created before the correction keeps `001-sessions` over its old large-object column: the
+control table records ids, never the statement, so its history does not say which type it
+has — harmless only because that type is the wider one, and the store's bound is then
+stricter than the column. **Moving
+between them is the host's own migration**; for sessions, which are ephemeral, dropping
+the table and its row in `db_base_migrations` is enough, at the cost of one more sign-in
+for everyone. `start` records the table's bound in the handle as `:session-data-max`, and
+the store reads it there, so the two cannot disagree. `CREATE TABLE IF NOT EXISTS` is not
 an escape either: Derby rejects it, it would run outside §7's boot gate, and a table
 with no recorded version can never be changed.
 

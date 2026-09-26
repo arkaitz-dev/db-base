@@ -560,3 +560,80 @@
               (str engine ": and a response whose :session is nil asks the store to delete"
                    " the row, which it did")))
         (finally (db/stop handle))))))
+
+(defn- session-of-length
+  "A session whose EDN is exactly `n` characters: `{:v \"…\"}` spends 7 on itself."
+  [n]
+  {:v (apply str (repeat (- n 7) "x"))})
+
+(deftest a-session-longer-than-its-table-holds-is-refused-before-the-engine-sees-it
+  (doseq [[engine url] (ts/engines)]
+    (let [handle (booted url)
+          s      (session/store handle {:lifetime-ms 60000 :readers {}})]
+      (try
+        (is (= 4000 (:session-data-max handle)) (str engine ": precondition: the portable table's bound"))
+        (is (= 4000 (count (pr-str (session-of-length 4000)))) "precondition: the helper spells what it says")
+        (let [k (store/write-session s nil (session-of-length 4000))]
+          (is (= (session-of-length 4000) (store/read-session s k))
+              (str engine ": a session exactly at the bound is written and read back"))
+          (is (= k (store/write-session s k (session-of-length 3999)))
+              (str engine ": and updated"))
+          (let [before (rows url)]
+            (doseq [[path key] [["insert" nil] ["update" k]]]
+              (let [e (try (store/write-session s key (session-of-length 4001)) nil
+                           (catch clojure.lang.ExceptionInfo e e))]
+                (is (= ["db-base: a session of 4001 characters is longer than the 4000 the session table holds"
+                        {:length 4001 :data-max 4000}]
+                       (ts/pair e))
+                    (str engine ": one character over is refused on the " path " path, by this library,"
+                         " naming the numbers and never the session"))))
+            (is (= before (rows url))
+                (str engine ": and nothing was written by either — SQLite would have stored it whole"))))
+        (finally (db/stop handle))))))
+
+(deftest the-bound-counts-what-java-counts-so-a-session-it-lets-through-fits
+  ;; A character outside the Basic Multilingual Plane is two UTF-16 units to Java and one
+  ;; character to PostgreSQL: counting units can only refuse early, never let through what
+  ;; the column refuses.
+  (doseq [[engine url] (ts/engines)]
+    (let [handle (booted url)
+          s      (session/store handle {:lifetime-ms 60000 :readers {}})
+          emoji  "😀"
+          over   {:v (apply str (repeat 1997 emoji))}]
+      (try
+        (is (= [4001 2004] [(count (pr-str over)) (.codePointCount ^String (pr-str over) 0 (count (pr-str over)))])
+            "precondition: 4001 units, fewer characters than the bound")
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"a session of 4001 characters"
+                              (store/write-session s nil over))
+            (str engine ": refused by units, which is the conservative count"))
+        (finally (db/stop handle))))))
+
+(deftest the-store-takes-its-bound-from-the-handle-and-the-portable-one-without-it
+  (doseq [[engine url] (ts/engines)]
+    (let [handle (db/start (assoc (ts/config url "three") :migrations :none
+                                  :sessions {:lock-wait-ms 1000 :dialect :postgresql}))]
+      (try
+        (let [s (session/store handle {:lifetime-ms 60000 :readers {}})
+              k (store/write-session s nil (session-of-length 10000))]
+          (is (= (session-of-length 10000) (store/read-session s k))
+              (str engine ": a dialect's unbounded table takes a session the portable one refuses")))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"longer than the 4000"
+                              (store/write-session (session/store {:datasource (:datasource handle)}
+                                                                  {:lifetime-ms 60000 :readers {}})
+                                                   nil (session-of-length 4001)))
+            (str engine ": a handle that does not say gets the portable bound, the conservative one"))
+        (finally (db/stop handle))))))
+
+(deftest a-hand-built-handle-with-a-bad-bound-is-refused-at-construction
+  (let [[_ url] (first (ts/engines))
+        handle  (booted url)]
+    (try
+      (doseq [bad ["4000" 0 -1 4000.0]]
+        (is (= ["db-base: the handle's :session-data-max must be a positive integer, or nil for an unbounded table"
+                {:config-key [:session-data-max] :value bad}]
+               (try (session/store (assoc handle :session-data-max bad) {:lifetime-ms 60000 :readers {}}) nil
+                    (catch clojure.lang.ExceptionInfo e (ts/pair e))))
+            (str (pr-str bad) " is refused here rather than at the first write")))
+      (is (some? (session/store (assoc handle :session-data-max nil) {:lifetime-ms 60000 :readers {}}))
+          "control: nil, a dialect's unbounded table, is taken")
+      (finally (db/stop handle)))))

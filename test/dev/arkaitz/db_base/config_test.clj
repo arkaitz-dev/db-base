@@ -49,7 +49,7 @@
         dir      #(refusal "[:migrations :dir] must be a non-blank string" {:config-key [:migrations :dir] :value %})
         lock     #(refusal "[:migrations :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
                            {:config-key [:migrations :lock-wait-ms] :value %})
-        sess     #(refusal ":sessions must be :none or a map of :lock-wait-ms"
+        sess     #(refusal ":sessions must be :none or a map of :lock-wait-ms and :dialect"
                            {:config-key [:sessions] :value %})
         sess-ms  #(refusal "[:sessions :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
                            {:config-key [:sessions :lock-wait-ms] :value %})]
@@ -134,11 +134,11 @@
       [":sessions {}" (assoc base :sessions {}) (sess-ms nil)]
       [":sessions with :dir, the copy-paste from :migrations"
        (assoc base :sessions {:dir "x"})
-       (refusal "unknown key [:dir] in [:sessions] — it takes [:lock-wait-ms]"
+       (refusal "unknown key [:dir] in [:sessions] — it takes [:dialect :lock-wait-ms]"
                 {:config-key [:sessions :dir]})]
       [":sessions with an unknown key beside a wrong wait: the unknown is named first"
        (assoc base :sessions {:table "x" :lock-wait-ms -1})
-       (refusal "unknown key [:table] in [:sessions] — it takes [:lock-wait-ms]"
+       (refusal "unknown key [:table] in [:sessions] — it takes [:dialect :lock-wait-ms]"
                 {:config-key [:sessions :table]})]]
      (for [v [nil -1 1.5 1.5M 3/2 "10" 2147483648 2147483648N]]
        [(str "[:sessions :lock-wait-ms] " (pr-str v))

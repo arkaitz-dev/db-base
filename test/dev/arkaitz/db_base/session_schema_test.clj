@@ -16,6 +16,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [dev.arkaitz.db-base :as db]
+            [dev.arkaitz.db-base.session.schema :as schema]
             [dev.arkaitz.db-base.test-support :as ts])
   (:import [java.sql Connection DriverManager ResultSet SQLException]))
 
@@ -46,13 +47,15 @@
   [engine]
   (second (first (filter #(= engine (first %)) (ts/engines)))))
 
-(def ^:private long-value
-  "Longer than any bounded column anyone would write by hand. Not a limit and not a
-  measurement of one: its only job is to exceed a bound, so that a `data` column declared
-  as a bounded `VARCHAR` instead of §8's `CLOB` cannot take it. Measured 2026-09-21: H2
-  refuses this into a `VARCHAR(8)` and SQLite stores it whole — so the failure mode really
-  does depend on the engine, which is §8's argument, and the strict engine of §3's pair is
-  the one that carries this assertion."
+(def ^:private widest-value
+  "Exactly as long as the store lets a session be (SPEC §8, `schema/data-max`), so the
+  table must hold it: a column narrower than the store's bound would refuse on a strict
+  engine a session the store had accepted. SQLite stores anything whatever the declared
+  width, so H2 is the engine that carries this."
+  (apply str (repeat schema/data-max "x")))
+
+(def ^:private beyond-any-bound
+  "Longer than the portable column: what only an unbounded dialect's table may hold."
   (apply str (repeat 10000 "x")))
 
 (defn- write-session-row!
@@ -91,7 +94,7 @@
 
 (deftest a-map-creates-the-table-records-its-id-and-a-second-boot-applies-none
   (doseq [[engine url] (ts/engines)]
-    (is (= {:session-migrations-applied 1} (ts/boot (sessions-config url 1000)))
+    (is (= {:session-migrations-applied 1 :session-data-max 4000} (ts/boot (sessions-config url 1000)))
         (str engine ": the first boot applies this library's one migration, and the handle"
              " says so under a key of its own — `:migrations-applied` is the host's and is"
              " absent here, because this host asked for no run of its own"))
@@ -106,22 +109,22 @@
     ;; The table is asked for by what §8 says it must HOLD, not by its existence: a DDL
     ;; that created `db_base_sessions` with plausible-looking wrong types is a table that
     ;; exists and a store that loses data. A short probe row cannot tell those apart,
-    ;; because `getString` and `getLong` normalise every candidate type — measured: with
-    ;; `'d'` and `0` in the row, changing `CLOB` to `VARCHAR(8)` left this whole suite
-    ;; green.
-    (write-session-row! url "k-7f3a" long-value 1700000000000)
-    (is (= [["k-7f3a" long-value 1700000000000]] (session-rows url))
+    ;; because `getString` and `getLong` normalise every candidate type — measured
+    ;; 2026-09-21: with `'d'` and `0` in the row, narrowing the data column to eight
+    ;; characters left this whole suite green.
+    (write-session-row! url "k-7f3a" widest-value 1700000000000)
+    (is (= [["k-7f3a" widest-value 1700000000000]] (session-rows url))
         (str engine ": and the row comes back as it went in. Two types are pinned by this"
-             " one round trip: a bounded `VARCHAR` for the data cannot take 10,000"
-             " characters, and an `INTEGER` cannot hold an epoch in milliseconds. Both"
-             " survive on the permissive engine and are refused by the strict one, which"
-             " is what §3 keeps a strict engine in the pair for"))
+             " one round trip: a data column narrower than the store's bound cannot take"
+             " the widest session the store accepts, and an `INTEGER` cannot hold an epoch"
+             " in milliseconds. Both survive on the permissive engine and are refused by the"
+             " strict one, which is what §3 keeps a strict engine in the pair for"))
     (is (instance? SQLException (ts/thrown-any #(write-session-row! url "k-7f3a" "again" 0)))
         (str engine ": and the id is the primary key §8 says it is — a second row under one"
              " id is refused by the engine, which is the store's whole integrity. The class"
              " is asserted and not merely the presence of something: `thrown-any` answers"
              " the keyword ::no-throw when nothing throws, and that is `some?` too"))
-    (is (= {:session-migrations-applied 0} (ts/boot (sessions-config url 1000)))
+    (is (= {:session-migrations-applied 0 :session-data-max 4000} (ts/boot (sessions-config url 1000)))
         (str engine ": the second boot applies none. Zero is the assertion and not a floor:"
              " re-applying would meet `CREATE TABLE db_base_sessions` on a table that is"
              " already there, which §7 turns into a failed boot"))
@@ -132,7 +135,7 @@
     ;; control table cannot brick an ordinary restart. Pinned for the host's run in
     ;; `migrations_test`; without this it was unpinned for the library's.
     (plant-lock-row! url "db_base_migrations")
-    (is (= {:session-migrations-applied 0} (ts/boot (sessions-config url 0)))
+    (is (= {:session-migrations-applied 0 :session-data-max 4000} (ts/boot (sessions-config url 0)))
         (str engine ": and a boot with nothing left to apply never asks for the lock, so a"
              " row a dead holder left under this library's own control table does not stop"
              " it — with a wait of 0, which would fail at once if it asked"))))
@@ -162,7 +165,7 @@
     ;; succeed if this library's DDL already ran AND committed on this database, which is
     ;; what makes this a test of order rather than of co-occurrence.
     (let [cfg (assoc (ts/config url "needs-sessions") :sessions {:lock-wait-ms 1000})]
-      (is (= {:session-migrations-applied 1 :migrations-applied 1} (ts/boot cfg))
+      (is (= {:session-migrations-applied 1 :session-data-max 4000 :migrations-applied 1} (ts/boot cfg))
           (str engine ": both runs applied one migration"))
       (is (= [["ORDER-PROBE-7f3a"]] (ts/query url "SELECT id FROM db_base_sessions"))
           (str engine ": and the host's migration wrote into this library's table, which it"
@@ -181,7 +184,7 @@
 (deftest the-two-runs-take-lock-rows-of-their-own-and-give-back-only-those
   (doseq [[engine url] (ts/engines)]
     (plant-lock-row! url "ragtime_migrations")
-    (is (= {:session-migrations-applied 1} (ts/boot (sessions-config url 0)))
+    (is (= {:session-migrations-applied 1 :session-data-max 4000} (ts/boot (sessions-config url 0)))
         (str engine ": a row held forever under the HOST's control table does not stop this"
              " library's run, because the lock is keyed by the control table's name"))
     (is (= [["ragtime_migrations" dead-holder dead-at]] (ts/lock-rows url))
@@ -260,7 +263,7 @@
 
 (deftest the-hosts-own-reset-leaves-this-librarys-history-standing
   (doseq [[engine url] (ts/engines)]
-    (is (= {:session-migrations-applied 1 :migrations-applied 3}
+    (is (= {:session-migrations-applied 1 :session-data-max 4000 :migrations-applied 3}
            (ts/boot (assoc (ts/config url "three") :sessions {:lock-wait-ms 1000})))
         (str engine ": precondition — both runs applied, so the drop below has something to"
              " take away"))
@@ -272,7 +275,7 @@
     (is (= [["001-sessions"]] (recorded-by-the-library url))
         (str engine ": this library's history survived the host's reset, which is the whole"
              " reason §8 insists on two control tables"))
-    (is (= {:session-migrations-applied 0 :migrations-applied 3}
+    (is (= {:session-migrations-applied 0 :session-data-max 4000 :migrations-applied 3}
            (ts/boot (assoc (ts/config url "three") :sessions {:lock-wait-ms 1000})))
         (str engine ": so the next boot re-applies the host's three and none of this"
              " library's. Under one shared table that boot does not merely count wrong — it"
@@ -286,7 +289,7 @@
   ;; second silent break-way — a library upgrade whose migration sorts below one already
   ;; applied — is the same refusal seen from the other side.
   (doseq [[engine url] (ts/engines)]
-    (is (= {:session-migrations-applied 1} (ts/boot (sessions-config url 1000)))
+    (is (= {:session-migrations-applied 1 :session-data-max 4000} (ts/boot (sessions-config url 1000)))
         (str engine ": precondition — this version's own migration is applied and recorded"))
     (ts/execute! url (str "INSERT INTO db_base_migrations (id, created_at)"
                           " VALUES ('002-from-the-future', '2026-09-21T00:00:00')"))
@@ -301,3 +304,45 @@
     (is (= [] (ts/lock-rows url))
         (str engine ": and the disagreement is reported before the lock, so a boot that had"
              " nothing to apply leaves nothing behind"))))
+
+(deftest a-named-dialect-creates-its-own-table-under-its-own-id-and-says-it-is-unbounded
+  (doseq [[engine url] (ts/engines)]
+    (is (= {:session-migrations-applied 1 :session-data-max nil}
+           (ts/boot (assoc-in (sessions-config url 1000) [:sessions :dialect] :postgresql)))
+        (str engine ": the handle tells the store the table is unbounded"))
+    (is (= [["001-sessions-postgresql"]] (recorded-by-the-library url))
+        (str engine ": recorded under the dialect's own id, so the database says which schema it has"))
+    (write-session-row! url "k-pg" beyond-any-bound 1700000000000)
+    (is (= [["k-pg" beyond-any-bound 1700000000000]] (session-rows url))
+        (str engine ": and it holds what the portable column never would — on H2, which"
+             " refuses an over-long value, this is the column's type speaking"))))
+
+(deftest naming-a-dialect-over-the-other-schema-is-refused-both-ways
+  (doseq [[engine url] (ts/engines)
+          [first-dialect second-dialect missing] [[nil :postgresql "001-sessions"]
+                                                  [:postgresql nil "001-sessions-postgresql"]]]
+    (let [url (fresh engine)
+          cfg #(cond-> (sessions-config url 1000) % (assoc-in [:sessions :dialect] %))]
+      (is (= 1 (:session-migrations-applied (ts/boot (cfg first-dialect))))
+          (str engine ": precondition: the first boot made the " (or first-dialect "portable") " table"))
+      (let [e (ts/thrown #(db/start (cfg second-dialect)))]
+        (is (= [(str "db-base: migration " missing " is recorded in db_base_migrations but not found under "
+                     (if second-dialect
+                       (str "the " second-dialect " session schema this version of db-base ships")
+                       "the schema this version of db-base ships"))
+                {:config-key [:sessions] :migration-id missing}]
+               (ts/pair e))
+            (str engine ": " (or first-dialect "portable") " then " (or second-dialect "portable")
+                 " is refused, naming the migration the database has and this source does not"))))))
+
+(deftest an-unknown-dialect-is-refused-by-name-before-anything-opens
+  (let [before (ts/pool-number)
+        e      (ts/thrown #(db/start (assoc-in (sessions-config ts/url-sentinel 1000) [:sessions :dialect] :oracle)))]
+    (is (= ["db-base: [:sessions :dialect] must be one of [:postgresql], or absent for the portable schema"
+            {:config-key [:sessions :dialect] :value :oracle}]
+           (ts/pair e)))
+    (is (= ["db-base: [:sessions :dialect] must be one of [:postgresql], or absent for the portable schema"
+            {:config-key [:sessions :dialect] :value nil}]
+           (ts/pair (ts/thrown #(db/start (assoc-in (sessions-config ts/url-sentinel 1000) [:sessions :dialect] nil)))))
+        "an explicit nil is not the portable schema by accident: absent is how that is said")
+    (is (= before (ts/pool-number)) "refused before a pool was constructed")))

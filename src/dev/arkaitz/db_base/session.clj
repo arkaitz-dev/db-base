@@ -25,11 +25,17 @@
   the path of every request that touches a session, and never on a timer, which §9
   forbids.
 
-  **Five statements, all ANSI**, measured on five engines rather than reasoned about. A
-  dialect table here would be the mistake: it would make correctness a function of an
-  enumerated list, and the first engine absent from that list breaks with no symptom until
-  it is in production. The day ANSI stops being enough, a sibling namespace named after
-  that engine appears beside this one and this goes on meaning what it says."
+  **Five statements, all ANSI**, measured on five engines rather than reasoned about, and
+  the same under every dialect. What an engine does differently is the table's column
+  type, and that lives in a dialect namespace the host names at `start` (SPEC §8), never
+  here: a dialect table in the statements would make correctness a function of an
+  enumerated list, and the first engine absent from it breaks with no symptom until it is
+  in production.
+
+  **A session longer than its table holds is refused here, before any engine sees it.**
+  The portable table's column is bounded, and engines disagree about an over-long value —
+  most throw, SQLite stores it whole — so the refusal is made in Clojure, the same
+  everywhere, from the bound `start` put in the handle."
   (:require [clojure.edn :as edn]
             [dev.arkaitz.db-base.session.schema :as schema]
             [ring.middleware.session.store :as store])
@@ -57,9 +63,9 @@
 
 (defn- first-string
   "The first column of the first row as a String, or nil when there is no row. Read with
-  `getString` rather than `getObject`, which is not a detail: on one of the two engines
-  the suite runs, the column type §8 chose comes back as a `java.sql.Clob` object and on
-  the other as a String, so a reader written against either alone breaks on the other."
+  `getString` rather than `getObject`: a table created before the column became a
+  bounded `VARCHAR` holds a large object, which some drivers hand back as a
+  `java.sql.Clob`, and `getString` reads either."
   [^DataSource ds sql & params]
   (with-open [c  (.getConnection ds)
               st (prepared c sql params)
@@ -141,7 +147,16 @@
       Long/MAX_VALUE
       (+ now lifetime-ms))))
 
-(defrecord JdbcStore [^DataSource datasource lifetime-ms readers]
+(defn- refuse-over-long!
+  "Refuses a session whose EDN is longer than `data-max` characters, naming both numbers
+  and never the session, which may hold whatever the host put in it."
+  [^String text data-max]
+  (when (and data-max (< (long data-max) (.length text)))
+    (throw (ex-info (str "db-base: a session of " (.length text) " characters is longer than the "
+                         data-max " the session table holds")
+                    {:length (.length text) :data-max data-max}))))
+
+(defrecord JdbcStore [^DataSource datasource lifetime-ms readers data-max]
   store/SessionStore
   (read-session [_ key]
     (when key
@@ -151,6 +166,7 @@
   (write-session [_ key session]
     (let [text    (serialise session readers)
           expires (expires-at (long lifetime-ms))]
+      (refuse-over-long! text data-max)
       (if key
         ;; One statement, and zero rows changed is success: the row is gone because it was
         ;; revoked, logged out or expired since the read, and putting it back is the
@@ -182,7 +198,9 @@
                   sessions holding tagged values; `{}` when they hold none
 
   The lifetime is this constructor's and not `start`'s: Ring does not supply it, it is not
-  a property of the pool, and two stores over one pool may legitimately differ."
+  a property of the pool, and two stores over one pool may legitimately differ. The most
+  a session may hold is the table's, which `start` recorded in the handle as
+  `:session-data-max`; a handle without it gets the portable table's bound."
   [handle {:keys [lifetime-ms readers] :as options}]
   (let [datasource (:datasource handle)]
     (when-not (instance? DataSource datasource)
@@ -201,7 +219,13 @@
              [:session :lifetime-ms] lifetime-ms))
     (when-not (map? readers)
       (fail! "[:session :readers] must be a map of tag to function" [:session :readers] readers))
-    (->JdbcStore datasource lifetime-ms readers)))
+    ;; `start` writes it; a hand-built handle may not, and a bad value would otherwise fail
+    ;; as a ClassCastException at the first write rather than here.
+    (when-not (or (nil? (:session-data-max handle)) (pos-int? (:session-data-max handle)))
+      (fail! "the handle's :session-data-max must be a positive integer, or nil for an unbounded table"
+             [:session-data-max] (:session-data-max handle)))
+    (->JdbcStore datasource lifetime-ms readers
+                 (if (contains? handle :session-data-max) (:session-data-max handle) schema/data-max))))
 
 (defn reclaim-expired!
   "Deletes the rows whose expiry has passed, and returns how many there were. The

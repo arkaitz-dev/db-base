@@ -92,6 +92,7 @@ you send it afterwards.
 :sessions {:lock-wait-ms 5000}
 
 (def store (session/store handle {:lifetime-ms 3600000 :readers {}}))
+;; a session longer than the table holds (4000 characters of EDN) is refused, the same on every engine
 (session/reclaim-expired! handle)   ; the operator's sweep, and the only one there is
 ```
 
@@ -104,6 +105,11 @@ arrangement.
 
 Its migration runs **before** the host's, under a lock row and a control table of its own,
 so a host's own `reset` cannot take this library's history with it.
+
+On PostgreSQL you may name its dialect, `:sessions {:lock-wait-ms 5000 :dialect :postgresql}`,
+for an unbounded `TEXT` column instead of the portable `VARCHAR(4000)`. Choose it before
+the first boot: each dialect's table is recorded under its own migration id, and naming
+the other one over an existing table is refused (`SPEC.md` §8 says how to move).
 
 **What it never does is upsert.** A `write-session` under a key whose row is gone changes
 nothing and says so: the row went because someone logged out, revoked it, or it expired,
@@ -164,8 +170,8 @@ instead — see the recipes below.
 
 - **`rows` and `one`** read through a connection of their own, opened from the same map
   `start` takes — never the pool, because a test that reads a write back through the code
-  that made it is asking the same code twice. A `Clob` comes back as text, since H2 and
-  SQLite disagree about that column.
+  that made it is asking the same code twice. A `Clob` comes back as text, since engines
+  disagree about large-object columns.
 - **`parking`** suspends the first statement your predicate accepts, so an interleaving
   is chosen rather than raced for; SQLite serialises writers, and a barrier alone passes
   a broken implementation every time. `:exit` says whether the test ended the park or
@@ -196,8 +202,10 @@ It makes no temporary database: that is a file, and this library reads none.
   comes back as a `BigDecimal`, and `(= 0M 0)` is false in Clojure — so a revocation
   generation compared with `=` silently never matches.
 - **If your schema must run on more than one engine, write it the way §8's table is
-  written**: `VARCHAR`, `CLOB` for long text (HSQLDB and Derby refuse `TEXT`), `BIGINT`,
-  and no clause one family takes and another refuses. The suite's own dialect table, in
+  written**: `VARCHAR` with a bound you enforce yourself, `BIGINT`, and no clause one
+  family takes and another refuses. Long text has no type every engine takes — PostgreSQL
+  refuses `CLOB`, HSQLDB and Derby refuse `TEXT` (measured 2026-09-26) — so either bound it
+  or give each engine its own migration, as this library's dialects do. The suite's own dialect table, in
   `test/dev/arkaitz/db_base/dialect_test.clj`, says which engine refuses which form.
 
 ## Running it in production

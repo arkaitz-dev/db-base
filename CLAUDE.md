@@ -101,8 +101,10 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 - [x] **The production engine is PostgreSQL** (decided with the user 2026-09-20, written
       into SPEC §3 and §11). The test engines stay H2 and SQLite — deliberately *not* the
       production engine, because a suite that ran on it would accept every
-      PostgreSQL-shaped mistake in silence. §8's types were already measured across five
-      engines and do not change. What the decision unblocks is auth-base's
+      PostgreSQL-shaped mistake in silence. §8's types had been measured across five
+      engines — but H2's PostgreSQL mode stood in for PostgreSQL, and the real engine
+      refused `CLOB` the first time the opt-in `:pg-test` suite ran (2026-09-26); see the
+      trap below. What the decision unblocks is auth-base's
       single-statement `take-challenge!`, and that belongs to that repository.
 
       **All three candidates were run against this library, unmodified, on 2026-09-20**,
@@ -307,6 +309,13 @@ is any code to break.**
   ran no tests: the count is the signal.
 - **A sweeper on a timer.** A background thread is a lifecycle the host did not ask
   for and a shutdown path that gets forgotten. SPEC §9.
+- **An engine's compatibility mode is not the engine.** §8's `data CLOB` passed H2 in
+  PostgreSQL mode and was refused by PostgreSQL 18.6 itself (`type "clob" does not
+  exist`), so every host on the production engine with sessions on could not boot —
+  found 2026-09-26 by the first run of `clojure -M:pg-test`, never by the everyday suite,
+  which cannot see it. The column is now a bounded `VARCHAR` the store enforces in
+  Clojure, with `:dialect :postgresql` for unbounded `TEXT` (SPEC §8). A claim about an
+  engine stands on that engine, run.
 - **H2's wrong-password delay is JVM-global.** Each refused login doubles a static delay
   and the next correct login anywhere sleeps part of it, so one test's wrong password
   made another test's one-second borrow fail at random. `:test` sets
