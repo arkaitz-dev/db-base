@@ -1,28 +1,19 @@
 (ns demo-events.main
-  "Boots the host. `port`, when given, is `:demo-events/port`, which the server and
-  the sign-in link's origin both read."
-  (:require [clojure.java.io :as io]
-            [demo-events.system]
-            [dev.arkaitz.web-base.config :as config]
-            [dev.arkaitz.web-base.integrant :as wbi]
-            [integrant.core :as ig])
+  "Boots the host through web-base's `run!`: the config resource with `#wb/env` for what
+  must not be committed, `env.local.edn` read only because this names it (an absent file
+  is the production case), a port on the command line put where the server and the
+  sign-in link both read it, and the system halted on the way down. Integrant derives the
+  order from the refs: the database starts first and stops last, so a schema that is not
+  there yet is never served by a port that is already open."
+  (:require [demo-events.system]
+            [dev.arkaitz.web-base.integrant :as wbi])
   (:gen-class))
 
-(defn config
-  ([] (config nil))
-  ([port]
-   (cond-> (wbi/read-string (config/env-file-readers "env.local.edn") (slurp (io/resource "config.edn")))
-     port (assoc :demo-events/port port))))
-
-(defn -main [& [port]]
-  (let [parsed (some-> port parse-long)]
-    (when (and port (not (<= 1 (or parsed 0) 65535)))
-      (binding [*out* *err*]
-        (println "demo-events: the port must be a number from 1 to 65535, not" (pr-str port)))
-      (System/exit 1))
-    (let [system (ig/init (config parsed))]
-      (println "demo-events: serving on port" (get-in system [:dev.arkaitz.web-base/server :port])
-               "· migrations applied this boot:"
-               (get-in system [:dev.arkaitz.db-base/database :migrations-applied] 0))
-      (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable #(ig/halt! system)))
-      @(promise))))
+(defn -main [& args]
+  (wbi/run! {:config    "config.edn"
+             :env-file  "env.local.edn"
+             :port-path [:demo-events/port]
+             :banner    #(str "demo-events: serving on port " (get-in % [:dev.arkaitz.web-base/server :port])
+                              " · migrations applied this boot: "
+                              (get-in % [:dev.arkaitz.db-base/database :migrations-applied] 0))}
+            args))

@@ -3,6 +3,7 @@
   functions are built here from keys `config.edn` names."
   (:require [demo-events.routes :as routes]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.console :as console]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base.session :as session]
             [dev.arkaitz.auth-base.integrant]
@@ -14,11 +15,7 @@
 
 (defmethod ig/init-key :demo-events/auth-config [_ {:keys [db port ttl-ms]}]
   {:store      (auth-jdbc/store (auth-jdbc/check! (:datasource db)))
-   :deliver!   (fn [identifier link]
-                 (println)
-                 (println "  a sign-in link for" identifier)
-                 (println " " link)
-                 (println))
+   :deliver!   console/deliver!
    :link       {:base-url (str "http://localhost:" port) :redeem-path "/login/redeem"}
    :ttl-ms     ttl-ms
    :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})

@@ -20,6 +20,7 @@
   first one that could have noticed."
   (:require [demo-tasks.routes :as routes]
             [dev.arkaitz.auth-base :as auth]
+            [dev.arkaitz.auth-base.console :as console]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base.session :as session]
             ;; Requiring these three is what installs the keys `config.edn`
@@ -38,11 +39,7 @@
   {:store    (auth-jdbc/store (auth-jdbc/check! (:datasource db)))
    ;; The console, because a demo that needed a mail server would be a demo
    ;; about mail servers. A real host swaps this one function and nothing else.
-   :deliver!  (fn [identifier link]
-                (println)
-                (println "  a sign-in link for" identifier)
-                (println " " link)
-                (println))
+   :deliver!   console/deliver!
    ;; The port the server listens on, read from the same key the server reads,
    ;; so moving one cannot leave links pointing at the other.
    :link      {:base-url (str "http://localhost:" port) :redeem-path "/login/redeem"}

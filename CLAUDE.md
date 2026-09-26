@@ -70,7 +70,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.4.0 and auth-base 0.2.0 as releases** (2026-09-26),
+Every host consumes **web-base 0.5.0 and auth-base 0.3.0 as releases** (2026-09-26),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.

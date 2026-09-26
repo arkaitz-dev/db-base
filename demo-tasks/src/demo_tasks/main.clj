@@ -1,47 +1,20 @@
 (ns demo-tasks.main
-  "Boots the host. The order is the point, and Integrant derives it from the
-  refs rather than from anything written down: the database is a dependency of
-  the ceremony and of the web configuration, so it starts first and — on the way
-  down — stops last. A schema that is not there yet cannot be served by a port
-  that is already open.
-
-  Configuration is read from a resource this host names, with `#wb/env` for
-  anything that must not be committed. `env.local.edn` is web-base's development
-  convention: an absent file is not an error, it is the production case. Today
-  this host has no secret at all — SQLite needs no password and the session is a
-  row rather than a sealed cookie — and the reader is wired anyway, because the
-  line that changes is `:jdbc-url` and nothing else."
-  (:require [clojure.java.io :as io]
-            [demo-tasks.system]
-            [dev.arkaitz.web-base.config :as config]
-            [dev.arkaitz.web-base.integrant :as wbi]
-            [integrant.core :as ig])
+  "Boots the host through web-base's `run!`: the config resource with `#wb/env` for what
+  must not be committed, `env.local.edn` read only because this names it (an absent file
+  is the production case), a port on the command line put where the server and the
+  sign-in link both read it, and the system halted on the way down. Integrant derives the
+  order from the refs: the database starts first and stops last, so a schema that is not
+  there yet is never served by a port that is already open."
+  (:require [demo-tasks.system]
+            [dev.arkaitz.web-base.integrant :as wbi])
   (:gen-class))
 
-(def ^:private env-file "env.local.edn")
-
-(defn config
-  "The system map, with `port` overriding the one in the resource when given.
-  The server and the sign-in link both read `:demo-tasks/port`, so this is the
-  only value that moves."
-  ([] (config nil))
-  ([port]
-   (cond-> (wbi/read-string (config/env-file-readers env-file) (slurp (io/resource "config.edn")))
-     port (assoc :demo-tasks/port port))))
-
-(defn -main [& [port]]
-  (let [parsed (some-> port parse-long)]
-    (when (and port (not (<= 1 (or parsed 0) 65535)))
-      (binding [*out* *err*]
-        (println "demo-tasks: the port must be a number from 1 to 65535, not" (pr-str port)))
-      (System/exit 1))
-    (let [system (ig/init (config parsed))]
-      (println "demo-tasks: serving on port"
-               (get-in system [:dev.arkaitz.web-base/server :port])
-               "· migrations applied this boot:"
-               (get-in system [:dev.arkaitz.db-base/database :migrations-applied] 0))
-      (println "demo-tasks: sign-in links are printed here; any address creates an account")
-      (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable #(ig/halt! system)))
-      ;; Jetty does not join, so the process would otherwise exit with the
-      ;; server still running.
-      @(promise))))
+(defn -main [& args]
+  (wbi/run! {:config    "config.edn"
+             :env-file  "env.local.edn"
+             :port-path [:demo-tasks/port]
+             :banner    #(str "demo-tasks: serving on port " (get-in % [:dev.arkaitz.web-base/server :port])
+                              " · migrations applied this boot: "
+                              (get-in % [:dev.arkaitz.db-base/database :migrations-applied] 0)
+                              "\ndemo-tasks: sign-in links are printed here; any address creates an account")}
+            args))
