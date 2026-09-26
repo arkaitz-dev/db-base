@@ -9,25 +9,13 @@ with the measurements behind each one; this file is only how to use it.
 
 ## Depending on it
 
-There is no artifact published anywhere, **and no tag either** — this repository has
-never had one, so the `{:git/tag "v0.1.0"}` these lines used to recommend resolved to
-nothing for anybody who tried it. Corrected 2026-09-22, when the second host consumed
-this library and the instructions were read as instructions rather than as prose.
-
-Until there is a release, depend on a commit:
-
 ```clojure
-io.github.arkaitz-dev/db-base {:git/url "https://github.com/arkaitz-dev/db-base"
-                               :git/sha "<the commit you want>"}
+dev.arkaitz/db-base {:mvn/version "0.1.0"}
 ```
 
-or, working on it alongside a host of your own, from disk — which is what
-`demo-tasks/` does with its sibling auth-base, and the honest coordinate while a
-library and its consumer are being written together:
-
-```clojure
-dev.arkaitz/db-base {:local/root "../db-base"}
-```
+On Clojars since 2026-09-26. The engine is yours and so is its driver — declare
+`org.postgresql/postgresql`, `org.xerial/sqlite-jdbc` or whichever you run — and
+`ring-core` too if you use the session store.
 
 A consumer receives a connection pool and a migration runner, and nothing else: no JSON
 codec, no logging backend, no opinion about a query builder. HikariCP brings `slf4j-api`,
