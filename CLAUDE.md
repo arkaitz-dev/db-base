@@ -45,6 +45,9 @@ work**, never from convention. Observed:
     clojure -M:demo-events [port]          # events with a capacity and a waiting list (3003)
     clojure -M:demo-events-test
     clojure -M:pg-test                     # the production engine, opt-in: needs the container below
+    clojure -M:build-test                  # the release guards, against real git
+    clojure -T:build jar                   # target/db-base-<version>.jar, src only
+    clojure -T:build deploy                # to Clojars with CLOJARS_USERNAME/CLOJARS_PASSWORD; refuses a dirty, unpushed or tagged tree
 
 The PostgreSQL suite needs a server and `pg.local.edn` (gitignored) naming it. Observed
 2026-09-26, with Apple's `container` CLI 1.4.1 (Docker is not installed here):
