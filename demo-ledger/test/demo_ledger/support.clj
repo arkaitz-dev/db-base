@@ -10,13 +10,13 @@
   would see."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [dev.arkaitz.auth-base.jdbc :as aj]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]
             [dev.arkaitz.web-base.integrant :as wbi]
             [dev.arkaitz.web-base.testing :as wt]
             [integrant.core :as ig]
-            [next.jdbc :as jdbc]
-            [ring.mock.request :as mock]))
+            [next.jdbc :as jdbc]))
 
 (defn temp-db-path []
   (let [file (java.io.File/createTempFile "demo-ledger-" ".db")]
@@ -73,6 +73,16 @@
   (apply dbt/rows (config path) sql params))
 
 (defn one [path sql & params] (apply dbt/one (config path) sql params))
+
+(defn sessions
+  "Every row of db-base's session table, read by its owner's reader."
+  [path]
+  (dbt/sessions (config path)))
+
+(defn session
+  "The session table's row for `id`, or nil."
+  [path id]
+  (dbt/session (config path) id))
 
 (defn with-db*
   "Boots the host's database over a temporary file, hands the handle and the
@@ -144,10 +154,10 @@
   (get (:jar @jar) "ring-session"))
 
 (defn challenge-token
-  "The token of the challenge just issued, read from the table through the
-  test's own connection rather than scraped from the console."
-  [path]
-  (one path "SELECT token FROM login_challenge ORDER BY expires_at DESC, token"))
+  "The token of the challenge last issued for `identifier`, read through auth-base's
+  own reader of its table rather than scraped from the console."
+  [path identifier]
+  (aj/latest-challenge-token (datasource path) identifier))
 
 (defn sign-in!
   "The whole ceremony as a browser walks it: ask for a link, take the token the
@@ -155,25 +165,18 @@
   [app path jar identifier]
   (GET app jar "/login")
   (POST app jar "/login" {"identifier" identifier})
-  (let [token (challenge-token path)]
+  (let [token (challenge-token path identifier)]
     (GET app jar (str "/login/redeem/" token))
     (GET app jar "/")
     token))
 
-(defn- carrying-cookies
-  "`request` with the cookies `jar`'s browser holds."
-  [request jar]
-  (cond-> request
-    (seq (:jar @jar))
-    (mock/header "cookie" (str/join "; " (for [[k v] (:jar @jar)] (str k "=" v))))))
-
-(defn first-hop
-  "One request with this browser's cookies and, on a POST, the CSRF token of the last
-  page it saw — its redirect NOT followed. A followed redirect hides who answered: a
-  handler that sends to a gated page lands on the login exactly as the gate would."
+(defn hop
+  "One request with this browser's cookies — and, on a POST, the CSRF token of the
+  last page it saw — its redirect NOT followed, as `testing/visit` sends it with
+  `{:follow? false}`: a followed redirect hides who answered. The jar still takes what
+  the response set."
   [app jar method path]
-  (app (cond-> (carrying-cookies (mock/request method path) jar)
-         (= :post method) (mock/header "X-CSRF-Token" (:token @jar)))))
+  (:response (reset! jar (wt/visit (or @jar (wt/browser app)) method path nil {:follow? false}))))
 
 (defn with-system*
   "The whole system up over a temporary database, handed over whole — for a test
@@ -181,7 +184,7 @@
   [f]
   (let [path (temp-db-path)]
     (try
-      (let [system (ig/init (host-config path) [:dev.arkaitz.web-base/handler])]
+      (let [system (wbi/init (host-config path) [:dev.arkaitz.web-base/handler])]
         (try (f system path)
              (finally (ig/halt! system))))
       (finally (delete-db! path)))))

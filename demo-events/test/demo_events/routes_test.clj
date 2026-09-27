@@ -15,6 +15,7 @@
             [demo-events.support :as s]
             [demo-events.system]
             [dev.arkaitz.web-base :as wb]
+            [dev.arkaitz.web-base.testing :as wt]
             [reitit.core :as r]
             [reitit.ring :as ring]))
 
@@ -70,18 +71,16 @@
         (is (= [200 "/"] (s/landed app b "/"))
             "control: the gate opens for a subject, so the refusals below are the gate's"))
       (let [b (s/browser)]
-        (is (= 200 (:status (s/first-hop app b :get "/login"))) "control: a public page answers the anonymous")
-        (is (= [303 "/login?ab=spent"] ((juxt :status #(get-in % [:headers "Location"])) (s/first-hop app b :get "/login/redeem/x")))
+        (is (= 200 (:status (s/hop app b :get "/login"))) "control: a public page answers the anonymous")
+        (is (= [303 "/login?ab=spent"] ((juxt :status #(get-in % [:headers "Location"])) (s/hop app b :get "/login/redeem/x")))
             "control: a public route runs its own handler for the anonymous"))
       (doseq [[path methods] gated
               method         methods]
         (let [b        (s/browser)
               _        (s/GET app b "/login")
-              response (s/first-hop app b method (str/replace path #":[a-z]+" "x"))]
-          (is (= [303 "/login" "no-store" "HX-Request, HX-Request-Type"]
-                 ((juxt :status #(get-in % [:headers "Location"]) #(get-in % [:headers "Cache-Control"])
-                        #(get-in % [:headers "Vary"]))
-                  response))
-              (str (name method) " " path ": expected the gate's refusal on the first hop — a 403 means CSRF"
-                   " refused it before any gate, a 303 without no-store that the handler answered, a 500 that"
-                   " something threw")))))))
+              response (s/hop app b method (str/replace path #":[a-z]+" "x"))]
+          (is (wt/gate-refusal? response "/login")
+              (str (name method) " " path ": expected the gate's refusal on the first hop, got "
+                   (:status response) " " (select-keys (:headers response) ["Location" "Cache-Control" "Vary"])
+                   " — a 403 means CSRF refused it before any gate, a 303 without the refusal's headers"
+                   " that the handler answered, a 500 that something threw")))))))

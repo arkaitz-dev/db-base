@@ -55,7 +55,7 @@
       (testing "registration, which is the database's and not the session's"
         (is (= [["ada@example.test"]] (support/rows path "SELECT identifier FROM account"))
             "the account came into being at redemption, exactly as it does over a row")
-        (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+        (is (= [] (support/sessions path))
             (str "and not one session row exists — which is the precondition that says this"
                  " really is the cookie store and not the host's own")))
       (testing "and the application itself"

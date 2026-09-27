@@ -28,6 +28,7 @@
             [demo.handlers :as handlers]
             [demo.system]
             [dev.arkaitz.db-base.session :as session]
+            [dev.arkaitz.db-base.testing :as dbt]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.integrant :as wbi]
             [dev.arkaitz.web-base.testing :as wt]
@@ -77,10 +78,10 @@
 (defn- one [path sql] (ffirst (rows path sql)))
 
 (defn- session-rows
-  "Every session row, read through a connection of this test's own."
+  "Every session row as `[id data expires-at]`, read by db-base's own reader of its
+  table through a connection of this test's own."
   [path]
-  (vec (for [[id data expires] (rows path "SELECT id, data, expires_at FROM db_base_sessions ORDER BY id")]
-         [id (str data) (long expires)])))
+  (mapv (juxt :id :data :expires-at) (dbt/sessions {:jdbc-url (str "jdbc:sqlite:" path) :user "" :password ""})))
 
 (defn- session-of [path id]
   (some (fn [[row-id data _]] (when (= id row-id) (edn/read-string data))) (session-rows path)))

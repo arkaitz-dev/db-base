@@ -16,7 +16,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [demo-tasks.support :as support
-             :refer [GET GET-unfollowed POST browser challenge-token landed session-key-of sign-in! with-host]]
+             :refer [GET POST browser challenge-token hop landed session-key-of sign-in! with-host]]
             [demo-tasks.system]
             [integrant.core :as ig]
             [next.jdbc :as jdbc]
@@ -34,7 +34,7 @@
                " account here would answer, to anyone who could watch, who had just been asked about"))
       (is (= [[1]] (support/rows path "SELECT COUNT(*) FROM login_challenge"))
           "control: a challenge WAS stored, so the zero above is not a request that failed")
-      (let [token (challenge-token path)]
+      (let [token (challenge-token path "ada@example.test")]
         (is (= [200 "/"] (landed app jar (str "/login/redeem/" token)))
             "following the link signs the person in")
         (is (= [["ada@example.test"]] (support/rows path "SELECT identifier FROM account"))
@@ -124,7 +124,7 @@
             "the session that was ended is anonymous at its next request")
         (is (= [200 "/"] (landed app here "/"))
             "and the one that ended it is still signed in — which is the whole feature")
-        (is (= [] (support/rows path "SELECT id FROM db_base_sessions WHERE id = ?" other))
+        (is (nil? (support/session path other))
             "the row is gone, read through this test's own connection")
         (is (= [] (support/rows path "SELECT session_id FROM device WHERE session_id = ?" other))
             "and so is the host's record of it, or the list would show a session nobody can use")))))
@@ -146,7 +146,7 @@
         (POST app here "/logout" {})
         (is (= [] (support/rows path "SELECT session_id FROM device WHERE session_id = ?" leaving))
             "the device that logged out is forgotten")
-        (is (= [] (support/rows path "SELECT id FROM db_base_sessions WHERE id = ?" leaving))
+        (is (nil? (support/session path leaving))
             "and so is its session, which is db-base's half of the same act")
         (is (= [[staying]] (support/rows path "SELECT session_id FROM device"))
             (str "while the other device is untouched — a logout that forgot everything would"
@@ -180,7 +180,7 @@
         (POST app bob (str "/sessions/" adas "/end") {})
         (is (= [200 "/"] (landed app ada "/"))
             "ada is still signed in")
-        (is (= [[adas]] (support/rows path "SELECT id FROM db_base_sessions WHERE id = ?" adas))
+        (is (= adas (:id (support/session path adas)))
             (str "and her row is untouched — the owner is in the WHERE clause of the host's own"
                  " table, so the store was never even asked"))))))
 
@@ -192,7 +192,7 @@
     (let [jar (browser)]
       (GET app jar "/login")
       (POST app jar "/login" {"identifier" "ada@example.test"})
-      (GET-unfollowed app jar (str "/login/redeem/" (challenge-token path)))
+      (hop app jar :get (str "/login/redeem/" (challenge-token path "ada@example.test")))
       (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM device"))
           (str "nothing yet: at the redemption request `:session/key` still names the session"
                " being replaced, because Ring mints the new one inside write-session and hands"
@@ -210,8 +210,8 @@
     (let [jar (browser)]
       (sign-in! app path jar "ada@example.test")
       (let [key    (session-key-of jar)
-            expiry #(support/one path "SELECT expires_at FROM db_base_sessions WHERE id = ?" key)
-            rows   #(ffirst (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+            expiry #(:expires-at (support/session path key))
+            rows   #(count (support/sessions path))
             before (expiry)
             count- (rows)]
         (is (some? before) "precondition: this browser's session is a row we can watch")
@@ -278,5 +278,5 @@
   (with-host [app path]
     (let [answers (vec (repeatedly 3 #((juxt :status :body) (app (ring.mock.request/request :get "/health")))))]
       (is (= (repeat 3 [200 "ok"]) answers) "the probe is answered from the database")
-      (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+      (is (= [] (support/sessions path))
           "and leaves no session row behind"))))

@@ -115,5 +115,5 @@
   (with-host [app path]
     (let [answers (vec (repeatedly 3 #((juxt :status :body) (app (ring.mock.request/request :get "/health")))))]
       (is (= (repeat 3 [200 "ok"]) answers) "the probe is answered from the database")
-      (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM db_base_sessions"))
+      (is (= [] (support/sessions path))
           "and leaves no session row behind"))))
