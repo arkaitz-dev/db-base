@@ -41,13 +41,13 @@ So a host declares, besides this library:
 ```clojure
 (require '[dev.arkaitz.db-base :as db])
 
-(def handle
+(def handle                                          ; every key below is required
   (db/start {:jdbc-url   "jdbc:postgresql://…"     ; the host's engine, and its driver
-             :user       "…"
+             :user       "…"                        ; required too: "" for an engine with none, SQLite
              :password   "…"                        ; required, never defaulted, "" allowed
              :pool       {:max 10 :timeout-ms 5000}
              :migrations {:dir "db/migration" :lock-wait-ms 60000}
-             :sessions   {:lock-wait-ms 60000}}))   ; only with the session store below
+             :sessions   :none}))                   ; required: :none, or {:lock-wait-ms …} for the store below
 
 (:datasource handle)         ; a javax.sql.DataSource for next.jdbc, or whatever you use
 (:migrations-applied handle) ; how many ran during this boot
