@@ -21,7 +21,8 @@ proof 2026-09-20, §10's Integrant key the same day, §8's session store 2026-09
 §10's two amendments — `collision/arbitrate!` and the `testing` namespace — 2026-09-25.**
 Everything the specification asks for is written and tested. **Released as
 `dev.arkaitz/db-base 0.1.0` on Clojars 2026-09-26** (tag `v0.1.0` at `fe535b1`, verified
-from an isolated Maven repo), and the repository is public. Every public var of `src`
+from an isolated Maven repo), and the repository is public; **0.2.0 on 2026-09-28**, with
+the store refusing a boot without its table and `testing/sessions`/`session`. Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
@@ -70,7 +71,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.6.0 and auth-base 0.4.0 as releases** (2026-09-26),
+Every host consumes **web-base 0.7.0 and auth-base 0.5.0 as releases** (2026-09-28),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
@@ -181,6 +182,13 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       controls make that mean something and both are mutation-tested: a naive store must
       produce two winners, and the harness must be shown to have suspended somebody.
 
+- [ ] **auth-base's login form bounds the identifier before normalising it** (found
+      2026-09-28 by the Phase-3 panel on the hosts' bounds). `handlers.clj` `submitted?`
+      counts the raw value against 320, and the ceremony then lower-cases it: "İ" becomes
+      two characters, so a 320-character address can reach `login_challenge.identifier`
+      at up to 640 — a 500 on PostgreSQL, stored whole on SQLite. The hosts' own invitation
+      form was fixed the right way (bound after normalise); this one is auth-base's, and
+      needs a release. Low severity: it takes a crafted address and fails loud.
 - [ ] **Two auth-base threads this host opened and did not close**, both needing to be
       raised there rather than fixed from here:
       - **A magic link fetched by a corporate link scanner is consumed before the human
