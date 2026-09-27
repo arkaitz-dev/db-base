@@ -70,7 +70,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.6.0 and auth-base 0.3.0 as releases** (2026-09-26),
+Every host consumes **web-base 0.6.0 and auth-base 0.4.0 as releases** (2026-09-26),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
@@ -189,11 +189,11 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
         gets "that link no longer works" for a link they never opened. Found only because
         this is the first magic-link consumer. It may want a POST behind a confirmation
         page, which is auth-base's design decision and not this repository's.
-      - **The subject a host returns from `:on-unknown` must be `=` to what `subject-for`
-        answers afterwards**, or the session it establishes can never be revoked — the
-        generation is keyed on the frozen value and `revoke!` moves a different one. It
-        is documented in auth-base now, and nothing enforces it; proving a host honours
-        it belongs to that host's tests, and `demo-tasks` does so only implicitly.
+      - ~~**The subject a host returns from `:on-unknown` must be `=` to what
+        `subject-for` answers afterwards**~~ — **enforced since auth-base 0.4.0
+        (`5120db8`)**: `redeem!` asks the store once more at registration and refuses a
+        hook whose answer it does not give back, so a session no revocation could end
+        can no longer be born.
 
 - [x] **`FRICTION.md`: nine findings from two more hosts** (`demo-ledger/`,
       `demo-events/`, 2026-09-25) — **all nine acted on the same day**, at the user's
@@ -256,8 +256,10 @@ host that needed them; the third is untouched:
       settled by construction rather than argument: the host writes it, `demo-tasks/` is
       the first that has, and "a page of code" turned out to be 48 lines plus 81.
 - [ ] auth-base has no ceremony for attaching a second identifier to an existing
-      subject — log in by email, later add a phone. Its §15 lists "the second factor",
-      which is a different thing. **Still open**, and untouched by 2026-09-22.
+      subject — log in by email, later add a phone. **Designed with the user 2026-09-27,
+      not built** (auth-base SPEC §15, `f2e2192`): after the first sign-in, a subject
+      with a single way in is asked for another — an alternative email and/or a mobile —
+      attached only once it proves itself by its own challenge.
 - [x] auth-base's `take-challenge!` as one `DELETE … RETURNING`. **Written and measured
       2026-09-22** — in the host, as rule 3 requires. `RETURNING` works on SQLite through
       xerial 3.53.4.0, and single use is proved by *forcing* an interleaving rather than
