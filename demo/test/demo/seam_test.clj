@@ -623,3 +623,35 @@
                 "newest first, which is what the page's `ORDER BY id DESC` promises"))
           (finally (ig/halt! system))))
       (finally (delete-db! path)))))
+
+
+(deftest a-note-past-its-column-writes-nothing-and-one-as-wide-is-written
+  ;; SQLite stores an over-long value whole, so without the host's check the development
+  ;; engine accepts what PostgreSQL refuses with a 500.
+  (let [path   (temp-db-path)
+        system (boot path)]
+    (try
+      (post-note! (app system) (apply str (repeat 201 "x")))
+      (is (= [] (rows path "SELECT body FROM note")) "a note of 201 characters is not written")
+      (post-note! (app system) (apply str (repeat 200 "x")))
+      (is (= [[(apply str (repeat 200 "x"))]] (rows path "SELECT body FROM note")) "control: 200, written whole")
+      (finally
+        (ig/halt! system)
+        (delete-db! path)))))
+
+(deftest a-visitor-name-past-the-forms-width-names-nobody
+  ;; A name is kept in the session, whose table holds 4000 characters; past that the store
+  ;; refuses the write and the visitor gets the base's 500. The host takes the form's 40.
+  (let [path   (temp-db-path)
+        system (boot path)]
+    (try
+      (let [[refused cookie] (name-yourself! (app system) (apply str (repeat 41 "x")))]
+        (is (= [[303 "/"] nil] [(redirected-home refused) cookie])
+            "41 characters: back home, and no session was rotated to hold a name"))
+      (let [[named cookie] (name-yourself! (app system) (apply str (repeat 40 "x")))]
+        (is (= [303 "/"] (redirected-home named)) "control: 40 characters are accepted")
+        (is (= (apply str (repeat 40 "x")) (:visitor (session-of path cookie)))
+            "and the session holds the name whole"))
+      (finally
+        (ig/halt! system)
+        (delete-db! path)))))

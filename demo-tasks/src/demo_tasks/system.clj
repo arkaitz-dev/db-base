@@ -10,14 +10,12 @@
   reason: functions and protocol implementations cannot live in EDN, so the
   parts that are data sit in the resource and the parts that are code sit here.
 
-  **What is deliberately absent: `auth/wrap-revoked`.** It is optional —
-  `subject-fn` is the contract and a revoked session already yields no subject —
-  and it would have to sit *inside* web-base's session middleware to see a
-  session at all, which web-base's stack offers no way to do. The cost, worth
-  naming because a server-side store is the first place it shows: a revoked
-  session's row lingers until its expiry instead of being deleted at the next
-  request. With a sealed cookie there is no row to linger, so this host is the
-  first one that could have noticed."
+  **`auth/wrap-revoked` is route middleware in `routes`**, which reitit runs inside
+  web-base's session layer, so a revoked session's row is deleted at its next request
+  instead of lingering until it expires. This docstring once said web-base's stack
+  offered no place for it; that was wrong, and auth-base's README shows the route form.
+  Routes outside the router — `/health`, the default 404 — are not covered, and a
+  revoked session there still yields no subject."
   (:require [demo-tasks.routes :as routes]
             [dev.arkaitz.auth-base :as auth]
             [dev.arkaitz.auth-base.console :as console]

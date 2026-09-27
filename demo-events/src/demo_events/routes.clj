@@ -14,6 +14,19 @@
 
 (defn- param [request k] (some-> (get-in request [:params k]) str/trim not-empty))
 
+(defn- within
+  "`v`, or nil when it is longer than `width`, its column's — counted as Java counts a
+  String, which never undercounts what PostgreSQL's VARCHAR counts: SQLite stores an
+  over-long value whole and PostgreSQL refuses it with a 500, so the host decides first
+  and answers it as it answers the field left empty."
+  [width v]
+  (when (and v (<= (count v) width)) v))
+
+(defn- bounded
+  "`param`, `within` its column's width."
+  [request k width]
+  (within width (param request k)))
+
 (defn- event-id [request] (get-in request [:path-params :id]))
 
 (defn- home [db request]
@@ -22,7 +35,7 @@
                              (:wb/form request)))))
 
 (defn- create-event [db request]
-  (let [title    (param request "title")
+  (let [title    (bounded request "title" 120)
         capacity (some-> (param request "capacity") parse-long)]
     (if (and title capacity (<= 1 capacity 1000))
       (response/see-other (str "/events/" (events/create-event! db (subject request) title capacity

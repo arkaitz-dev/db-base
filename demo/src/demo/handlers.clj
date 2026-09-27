@@ -18,7 +18,9 @@
   the visitor was anonymous, which is the ordinary case here."
   [_db request]
   (let [visitor (str/trim (str (get-in request [:params "visitor"])))]
-    (if (str/blank? visitor)
+    ;; The form's own 40, so a name cannot grow the session past what the session table
+    ;; holds, which the store would refuse as the base's 500.
+    (if (or (str/blank? visitor) (< 40 (count visitor)))
       (response/see-other "/")
       (session/rotate (response/see-other "/") {:visitor visitor}))))
 
@@ -29,8 +31,15 @@
   [_db _request]
   (assoc (response/see-other "/") :session nil))
 
-(defn create [db request]
-  (notes/add-note! db (get-in request [:params "body"]))
+(defn create
+  "Writes the note, unless the parameter is missing or longer than `note.body`'s 200 —
+  counted as Java counts a String, which never undercounts PostgreSQL's VARCHAR: SQLite
+  would store it whole and PostgreSQL refuse it with a 500, so the host decides first and
+  writes nothing."
+  [db request]
+  (let [body (get-in request [:params "body"])]
+    (when (and (string? body) (<= (count body) 200))
+      (notes/add-note! db body)))
   (response/see-other "/"))
 
 (defn health

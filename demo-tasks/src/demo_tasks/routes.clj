@@ -57,14 +57,23 @@
       (session-store/delete-session store session-id))
     (response/see-other "/sessions")))
 
+(defn- body-of
+  "The submitted body, or nil when the parameter is missing or longer than `task.body`'s
+  200 — counted as Java counts a String, which never undercounts PostgreSQL's VARCHAR:
+  SQLite would store it whole and PostgreSQL refuse it with a 500, so the host decides
+  first and writes nothing."
+  [request]
+  (let [body (get-in request [:params "body"])]
+    (when (and (string? body) (<= (count body) 200)) body)))
+
 (defn- add [db request]
-  (tasks/add-task! db (:wb/subject request) (get-in request [:params "body"]))
+  (when-let [body (body-of request)]
+    (tasks/add-task! db (:wb/subject request) body))
   (response/see-other "/"))
 
 (defn- rename [db request]
-  (tasks/rename-task! db (:wb/subject request)
-                      (get-in request [:path-params :id])
-                      (get-in request [:params "body"]))
+  (when-let [body (body-of request)]
+    (tasks/rename-task! db (:wb/subject request) (get-in request [:path-params :id]) body))
   (response/see-other "/"))
 
 (defn- toggle [db request]
@@ -141,7 +150,11 @@
   "auth-base's four routes and this host's eight, under one layout. `/health` is
   `sessionless`'s, outside the session: a probe wants a status line, not a page."
   [db ceremony store]
-  [["" {:wb/layouts [views/shell-layout]}
+  [["" {:wb/layouts  [views/shell-layout]
+        ;; Route middleware, so reitit runs it inside web-base's session layer: a
+        ;; revoked session's row is deleted at its next request instead of lingering
+        ;; until it expires.
+        :middleware [[auth/wrap-revoked ceremony]]}
     (into (auth-routes db ceremony {:view         views/login
                                     :login-path   "/login"
                                     :logout-path  "/logout"

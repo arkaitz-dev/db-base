@@ -16,6 +16,19 @@
 (defn- param [request k]
   (some-> (get-in request [:params k]) str/trim not-empty))
 
+(defn- within
+  "`v`, or nil when it is longer than `width`, its column's — counted as Java counts a
+  String, which never undercounts what PostgreSQL's VARCHAR counts: SQLite stores an
+  over-long value whole and PostgreSQL refuses it with a 500, so the host decides first
+  and answers it as it answers the field left empty."
+  [width v]
+  (when (and v (<= (count v) width)) v))
+
+(defn- bounded
+  "`param`, `within` its column's width."
+  [request k width]
+  (within width (param request k)))
+
 (defn- group-id [request] (get-in request [:path-params :id]))
 
 (defn- not-found!
@@ -31,7 +44,7 @@
                              (ledger/invitations-for db identifier)))))
 
 (defn- create-group [db request]
-  (if-let [group-name (param request "name")]
+  (if-let [group-name (bounded request "name" 80)]
     (response/see-other (str "/groups/" (ledger/create-group! db (subject request) group-name)))
     (response/see-other "/")))
 
@@ -48,7 +61,7 @@
 
 (defn- add-expense [db request]
   (let [id          (group-id request)
-        description (param request "description")
+        description (bounded request "description" 120)
         cents       (money/parse-cents (param request "amount"))]
     (cond
       ;; The group's own page again, with what was typed and why it was refused —
@@ -69,9 +82,12 @@
   its own `normalise`, so a host that configured another rule changes it once."
   [db ceremony request]
   (let [id (group-id request)]
-    (if (and (param request "identifier")
-             (ledger/invite! db (subject request) id (auth/normalise ceremony (param request "identifier"))))
-      (response/see-other (str "/groups/" id))
+    ;; Bounded after normalising, because lower-casing can lengthen a string ("İ" is two
+    ;; characters lower-cased) and it is the normalised address that is stored.
+    (if-let [identifier (some->> (param request "identifier") (auth/normalise ceremony) (within 320))]
+      (if (ledger/invite! db (subject request) id identifier)
+        (response/see-other (str "/groups/" id))
+        (not-found!))
       (not-found!))))
 
 (defn- accept [db request]
