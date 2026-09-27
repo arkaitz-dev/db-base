@@ -87,6 +87,26 @@
 (def ^:private reclaim-sql
   (str "DELETE FROM " schema/table " WHERE expires_at <= ?"))
 
+(def ^:private probe-sql
+  (str "SELECT id, data, expires_at FROM " schema/table " WHERE 1 = 0"))
+
+(defn- table-readable!
+  "Reads no row of the session table, so a store over a database that has none fails
+  when it is built — naming `[:sessions]` — rather than as the engine's refusal on every
+  request that touches a session. A handle does not say whether its boot asked for the
+  table, and one built by hand says nothing at all, so the database is asked. A
+  database that is not answering fails here too, with the driver's refusal as the cause."
+  [^DataSource ds]
+  (try (with-open [c    (.getConnection ds)
+                   st   (prepared c probe-sql [])
+                   rows (.executeQuery st)]
+         nil)
+       (catch java.sql.SQLException e
+         (fail! (str "the session store could not read its table " schema/table
+                     " — boot with :sessions {:lock-wait-ms …} so that start creates it"
+                     " (or the database is not answering: the cause says which)")
+                [:sessions] nil e))))
+
 (defn- deserialise
   "The EDN of a stored session, as this library's own refusal when it cannot be read.
   The reader throws a bare `RuntimeException` for a tag nobody gave it a function for,
@@ -200,7 +220,9 @@
   The lifetime is this constructor's and not `start`'s: Ring does not supply it, it is not
   a property of the pool, and two stores over one pool may legitimately differ. The most
   a session may hold is the table's, which `start` recorded in the handle as
-  `:session-data-max`; a handle without it gets the portable table's bound."
+  `:session-data-max`; a handle without it gets the portable table's bound. The table is
+  read once, for no row, when the store is built: a handle whose boot said
+  `:sessions :none` is refused here rather than on every request."
   [handle {:keys [lifetime-ms readers] :as options}]
   (let [datasource (:datasource handle)]
     (when-not (instance? DataSource datasource)
@@ -224,6 +246,7 @@
     (when-not (or (nil? (:session-data-max handle)) (pos-int? (:session-data-max handle)))
       (fail! "the handle's :session-data-max must be a positive integer, or nil for an unbounded table"
              [:session-data-max] (:session-data-max handle)))
+    (table-readable! datasource)
     (->JdbcStore datasource lifetime-ms readers
                  (if (contains? handle :session-data-max) (:session-data-max handle) schema/data-max))))
 

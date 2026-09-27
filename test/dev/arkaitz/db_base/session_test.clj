@@ -66,13 +66,14 @@
   counted, and when `arrived` is given the store is parked inside `getConnection` until
   `release` is delivered. No cooperation from the code under test is needed and none is
   asked for: `store` requires only that the handle's `:datasource` is a `javax.sql.DataSource`,
-  and the store's single door to the database is this method."
-  ([real counter] (counting-datasource real counter nil nil nil))
-  ([^DataSource real counter arrived release exit]
+  and the store's single door to the database is this method. It parks only once `armed`
+  holds true, so the read `store` makes of its table when it is built goes through."
+  ([real counter] (counting-datasource real counter nil nil nil (atom false)))
+  ([^DataSource real counter arrived release exit armed]
    (reify DataSource
      (getConnection [_]
        (swap! counter inc)
-       (when arrived
+       (when (and arrived @armed)
          (deliver arrived true)
          ;; What ended the wait is recorded, never discarded: a guard that expired on its
          ;; own would let the writer past while the test still believed it was parked, and
@@ -82,11 +83,14 @@
        (.getConnection real)))))
 
 (defn- counted
-  "`[store counter]` over `handle`, with every borrow counted."
+  "`[store counter]` over `handle`, with every borrow counted from the moment the store
+  exists — the one read its constructor makes of the table is not a call under test."
   [handle options]
-  (let [counter (atom 0)]
-    [(session/store {:datasource (counting-datasource (:datasource handle) counter)} options)
-     counter]))
+  (let [counter (atom 0)
+        s       (session/store {:datasource (counting-datasource (:datasource handle) counter)} options)]
+    (is (= 1 @counter) "precondition: building the store read its table once")
+    (reset! counter 0)
+    [s counter]))
 
 (deftest a-nil-key-inserts-under-a-minted-string-and-a-key-updates-that-row-in-place
   (doseq [[engine url] (ts/engines)]
@@ -173,10 +177,14 @@
           arrived (promise)
           release (promise)
           exit    (atom ::never-parked)
+          armed   (atom false)
           gated   (session/store {:datasource (counting-datasource (:datasource handle) counter
-                                                                   arrived release exit)}
-                                 {:lifetime-ms 60000 :readers {}})]
+                                                                   arrived release exit armed)}
+                                 {:lifetime-ms 60000 :readers {}})
+          built   @counter
+          _       (do (reset! counter 0) (reset! armed true))]
       (try
+        (is (= 1 built) (str engine ": precondition — building the store read its table once, unparked"))
         (is (= [[k "{:visitor \"ada\"}" (nth (first (rows url)) 2)]] (rows url))
             (str engine ": precondition — the session is there before anything races"))
         (let [[_ result] (ts/running #(store/write-session gated k {:visitor "ada" :seen 2}))]
@@ -637,3 +645,31 @@
       (is (some? (session/store (assoc handle :session-data-max nil) {:lifetime-ms 60000 :readers {}}))
           "control: nil, a dialect's unbounded table, is taken")
       (finally (db/stop handle)))))
+
+(deftest a-store-over-a-database-without-its-table-is-refused-when-built-naming-sessions
+  (doseq [[engine url] (ts/engines)]
+    (let [without (db/start (assoc (ts/config url "three") :migrations :none :sessions :none))]
+      (try
+        (let [e (try (session/store without {:lifetime-ms 60000 :readers {}}) ::built
+                     (catch clojure.lang.ExceptionInfo e e))]
+          (is (= {:config-key [:sessions] :value nil} (ex-data e))
+              (str engine ": a boot that asked for no session table is refused when the store is built,"
+                   " naming [:sessions] — not on every request that touches a session"))
+          (is (instance? java.sql.SQLException (ex-cause e)) (str engine ": with the engine's refusal as its cause"))
+          (is (re-find #"boot with :sessions" (str (ex-message e))) (str engine ": and saying what to do")))
+        (finally (db/stop without))))
+    (let [lacking (db/start (assoc (ts/config url "three") :migrations :none :sessions :none))]
+      (ts/execute! url "CREATE TABLE db_base_sessions (id VARCHAR(36) NOT NULL PRIMARY KEY, expires_at BIGINT NOT NULL)")
+      (try
+        (is (= {:config-key [:sessions] :value nil}
+               (try (session/store lacking {:lifetime-ms 60000 :readers {}}) ::built
+                    (catch clojure.lang.ExceptionInfo e (ex-data e))))
+            (str engine ": a table that lacks a column the store uses is refused the same way"))
+        (finally (db/stop lacking) (ts/execute! url "DROP TABLE db_base_sessions"))))
+    (let [with (booted url)]
+      (try
+        (let [s (session/store with {:lifetime-ms 60000 :readers {}})
+              k (store/write-session s nil {:visitor "ada"})]
+          (is (= {:visitor "ada"} (store/read-session s k))
+              (str engine ": control — over a boot that made the table, the store is built and works")))
+        (finally (db/stop with))))))
