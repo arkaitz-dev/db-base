@@ -70,7 +70,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.5.0 and auth-base 0.3.0 as releases** (2026-09-26),
+Every host consumes **web-base 0.6.0 and auth-base 0.3.0 as releases** (2026-09-26),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
@@ -217,9 +217,10 @@ Two belong to **web-base**, found by building the demo against it and measured
 - [x] **Its error handler sits inside its session middleware** — **answered
       2026-09-26 by web-base 0.4.0 (`5a5116d`)**: `/health` is now `:sessionless`,
       mounted before the session, and every host uses it; `demo`'s seam test sends a
-      probe carrying a session cookie on a closed pool and gets the 503. The boundary
-      itself did not move — a page route still meets the session first — but the
-      route that needed its answer delivered no longer passes through it.
+      probe carrying a session cookie on a closed pool and gets the 503. **And the
+      boundary itself moved in web-base 0.6.0 (`6e4af56`)**: a session store that
+      throws is the base's 500 page on every route, never a raw exception at the
+      adapter.
       Originally: **its error handler sits inside its session middleware.** `web_base.clj` wraps
       `ring-handler` with `error/default-handler` innermost and applies `session/wrap`
       later, so with a server-side store a database that is down makes a request die at
@@ -235,17 +236,17 @@ Two belong to **web-base**, found by building the demo against it and measured
       every five seconds writes seventeen thousand a day, and §8's rows are reclaimed only
       by a function the operator calls. A route that wants no session has no way to say so.
 
-- [ ] **Its stack has no injection point, and 2026-09-22 makes that a pattern rather
-      than an instance.** (2026-09-26: `:sessionless` covers the one case of a route that
-      must skip the session; `wrap-subject` on every route and `auth/wrap-revoked` still
-      have nowhere to go.) Two more measured with `demo-tasks`, both the same shape as the
-      one above: `wrap-subject` runs on **every** route, gated or not, so a page with no
-      identity to paint still pays a `generation` read; and `auth/wrap-revoked` cannot be
-      used at all, because it must sit *inside* the session middleware to see a session
-      and web-base offers no way to put it there. The cost of the second is that a
-      revoked session's row lingers until its expiry instead of being deleted at the next
-      request — invisible with a sealed cookie, which is why no earlier host could have
-      noticed. Three instances now; worth raising there as one finding about the stack.
+- [x] **"Its stack has no injection point"** — **closed 2026-09-27, and half of it was
+      wrong.** `auth/wrap-revoked` works under web-base as reitit route `:middleware`,
+      which runs inside the session layer (probe: after `revoke!` the next request
+      deleted the row); auth-base's README shows it (`20bf0bd`). The other half —
+      `wrap-subject` computing the subject on every route — was decided by a
+      five-lens panel to stay eager and be documented (`54d0c8e`): one indexed read,
+      9.7 µs measured, where revocation takes effect; a lazy `delay` would be truthy
+      and open every gate, an accessor would touch ~30 host sites, a per-route opt-out
+      leaves the default 404 without a subject, and a cached generation changes what
+      revocation means. The panel's side finding became web-base 0.6.0's error
+      boundary.
 
 Threads that belong to **auth-base**. Two were closed on 2026-09-22 by building the
 host that needed them; the third is untouched:

@@ -96,7 +96,7 @@
   ;; free of infrastructure, and next.jdbc is declared because the host calls it, rather
   ;; than leaning on the copy ragtime drags in (SPEC §3).
   :demo {:extra-paths ["demo/src" "demo/resources"]
-         :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+         :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                        org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                        com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
                        ch.qos.logback/logback-classic    {:mvn/version "1.6.3"}}
@@ -116,7 +116,7 @@
   ;; because the host calls it, and auth-base's optional JDBC store needs it
   ;; without declaring it, rather than leaning on the copy ragtime drags in (SPEC §3).
   :demo-tasks {:extra-paths ["demo-tasks/src" "demo-tasks/resources"]
-               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                              dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                              org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                              com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -124,7 +124,7 @@
                :main-opts   ["-m" "demo-tasks.main"]}
 
   :demo-tasks-test {:extra-paths ["demo-tasks/src" "demo-tasks/resources" "demo-tasks/test"]
-                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                                   com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -140,7 +140,7 @@
   ;; the others — aliases and directories, never :paths, :deps or :test — and the same
   ;; releases from Clojars.
   :demo-ledger {:extra-paths ["demo-ledger/src" "demo-ledger/resources"]
-               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                              dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                              org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                              com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -148,7 +148,7 @@
                :main-opts   ["-m" "demo-ledger.main"]}
 
   :demo-ledger-test {:extra-paths ["demo-ledger/src" "demo-ledger/resources" "demo-ledger/test"]
-                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                                   com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -159,7 +159,7 @@
                     :main-opts   ["-m" "cognitect.test-runner" "-d" "demo-ledger/test"]}
 
   :demo-events {:extra-paths ["demo-events/src" "demo-events/resources"]
-               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+               :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                              dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                              org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                              com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -167,7 +167,7 @@
                :main-opts   ["-m" "demo-events.main"]}
 
   :demo-events-test {:extra-paths ["demo-events/src" "demo-events/resources" "demo-events/test"]
-                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+                    :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.3.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                                   com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
@@ -178,7 +178,7 @@
                     :main-opts   ["-m" "cognitect.test-runner" "-d" "demo-events/test"]}
 
   :demo-test {:extra-paths ["demo/src" "demo/resources" "demo/test"]
-              :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.5.0"}
+              :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.6.0"}
                             org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
                             com.github.seancorfield/next.jdbc {:mvn/version "1.3.1048"}
                             ch.qos.logback/logback-classic    {:mvn/version "1.6.3"}
