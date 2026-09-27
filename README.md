@@ -20,10 +20,21 @@ On Clojars since 2026-09-26. The engine is yours and so is its driver — declar
 A consumer receives a connection pool and a migration runner, and nothing else: no JSON
 codec, no logging backend, no opinion about a query builder. HikariCP brings `slf4j-api`,
 a facade that logs nowhere until the host supplies a backend, and ragtime brings
-`next.jdbc`, which this library does not call. Integrant arrives too, with its own
+`next.jdbc` for its own use — this library does not call it, and a host that does should
+declare it rather than inherit it. Integrant arrives too, with its own
 `weavejester/dependency` — 23 KB between them — for the optional key below; a host that
 never requires `dev.arkaitz.db-base.integrant` loads neither. A test enforces that list,
 and a new arrival on it is a decision recorded with its reason.
+
+So a host declares, besides this library:
+
+| what | when |
+|---|---|
+| the JDBC driver (`org.postgresql/postgresql`, `org.xerial/sqlite-jdbc`, …) | always |
+| `ring/ring-core` | with the session store — web-base and auth-base already bring it |
+| `com.github.seancorfield/next.jdbc` | when the host queries, and for auth-base's `jdbc` store |
+| a logging backend (`ch.qos.logback/logback-classic`, …) | or HikariCP and the host log nowhere |
+| a test runner and `ring/ring-mock` | in the host's test alias |
 
 ## The lifecycle: three functions
 
@@ -35,7 +46,8 @@ and a new arrival on it is a decision recorded with its reason.
              :user       "…"
              :password   "…"                        ; required, never defaulted, "" allowed
              :pool       {:max 10 :timeout-ms 5000}
-             :migrations {:dir "db/migration" :lock-wait-ms 60000}}))
+             :migrations {:dir "db/migration" :lock-wait-ms 60000}
+             :sessions   {:lock-wait-ms 60000}}))   ; only with the session store below
 
 (:datasource handle)         ; a javax.sql.DataSource for next.jdbc, or whatever you use
 (:migrations-applied handle) ; how many ran during this boot
@@ -60,7 +72,10 @@ closes it before leaving.
 
 `:migrations` is `:none`, or a map with `:dir`, a **classpath prefix** (not a file path —
 this library never reads a file it was not handed), and `:lock-wait-ms`, how long a boot
-waits for another instance to finish migrating before failing and naming it.
+waits for another instance to finish migrating before failing and naming it. Under that
+prefix, name each migration `001-accounts.up.sql` — the id is everything before `.up.sql`,
+applied in order — or write it as EDN. A file ragtime would pass over, such as
+`001-accounts.sql`, is refused at boot rather than left unapplied.
 
 Every failure is an `ex-info` whose data carries `:config-key` as a vector path, plus
 `:migration-id` when one migration is to blame. The JDBC URL and the password are never
@@ -80,9 +95,16 @@ you send it afterwards.
 :sessions {:lock-wait-ms 5000}
 
 (def store (session/store handle {:lifetime-ms 3600000 :readers {}}))
+;; give the cookie the same lifetime, or the browser forgets a session the row still holds
+{:store store :cookie-attrs {:max-age 3600}}   ; web-base's :session
 ;; a session longer than the table holds (4000 characters of EDN) is refused, the same on every engine
 (session/reclaim-expired! handle)   ; the operator's sweep, and the only one there is
 ```
+
+A session is stored as EDN, so `:readers` is the tag readers for anything tagged a host
+puts in it — `{}` when it holds only plain data. A session whose tag has no reader is
+refused naming `[:session :readers]` when it is written, and a stored one when it is read,
+never answered as an empty session that would sign everybody out in silence.
 
 **It is the only namespace here that needs a dependency this library does not declare.**
 `ring-core` is not in `:deps`: a host that wants the store brings it — every host of
@@ -105,9 +127,15 @@ and putting it back undoes a revocation. Ring's own `MemoryStore` upserts, and t
 JDBC store the ecosystem has copied that — `SPEC.md` §8 has the whole argument, and it is
 the reason this library is more than wiring.
 
-**Before you wire it, know what it costs.** A session in a row means every request touches
-the database: a visitor who never signs in still leaves a row, because the CSRF token
-lives in the session, and nothing removes those but `reclaim-expired!`.
+**Before you wire it, know what it costs.** A session in a row means every request that
+carries a session cookie reads the database, and so a pool that is down fails the request
+instead of degrading it. With web-base 0.4.0 or later a visitor who never signs in leaves a
+row only when a page renders a form, because the CSRF token is written to the session the
+first time something reads it; nothing removes those rows but `reclaim-expired!`.
+
+**Put `/health` in web-base's `:sessionless`**, answered before the session layer. Mounted
+as an ordinary route, a probe that carries a cookie reads the session first, and when the
+database is down it gets the base's 500 page instead of the 503 your `ready?` computed.
 
 ## A write the engine refused
 
@@ -261,7 +289,7 @@ mistake shaped like it.
 
 ## The hosts that consume it
 
-There are two, and they prove different things.
+There are four, and they prove different things.
 
 ### `demo-tasks/` — the three libraries together
 
@@ -285,13 +313,23 @@ carries the control — the same host, the same handler, the same routes over a 
 cookie — which asserts that everything else still works and that this one call cannot
 end anything.
 
-It writes the adapter this library is not allowed to contain: auth-base's `Store` port,
-five methods over the datasource db-base handed it. 48 lines, which is what "a page of
-code" turns out to mean.
+It was the first host to write auth-base's `Store` port over the datasource db-base
+hands out — the adapter this library is not allowed to contain. That adapter now ships as
+auth-base's optional `jdbc` namespace, and the three hosts of all three libraries use it,
+with web-base and auth-base from Clojars.
 
-It consumes auth-base from `../auth-base` rather than from Clojars, because the
-Integrant key and the registration hook it needs were written for it and are not in
-0.1.0 yet. That is a coordinate you would change; it is not a pattern to copy.
+### `demo-ledger/` and `demo-events/` — two more hosts of all three
+
+Shared expenses between a group of people, and events with a capacity and a waiting
+list. They were written to find the friction the first host had learnt to live with, and
+`FRICTION.md` records what they found and where each finding was resolved.
+
+```
+clojure -M:demo-ledger [port]    # 3002 by default
+clojure -M:demo-ledger-test
+clojure -M:demo-events [port]    # 3003 by default
+clojure -M:demo-events-test
+```
 
 ### `demo/` — this library and web-base, alone
 
