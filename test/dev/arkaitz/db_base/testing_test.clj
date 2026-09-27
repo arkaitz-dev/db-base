@@ -328,3 +328,22 @@
              (str engine ": the flag was set again when prepare returned, and the statement ran"))
          (is (= [] (dbt/rows cfg "SELECT id FROM t WHERE id = 3")) (str engine ": to its end"))
          (finally (release!)))))))
+
+(deftest sessions-and-session-read-the-session-table-through-a-connection-of-their-own
+  (doseq [[engine url] (ts/engines)]
+    (let [cfg    (assoc (config url) :sessions {:lock-wait-ms 1000})
+          handle (db/start cfg)]
+      ;; Rows written by statements of the test's own, the greater id first, so id order is
+      ;; never insertion order — an engine answering in insertion order without an ORDER BY
+      ;; would otherwise pass half the time — and one of them already expired.
+      (ts/execute! url "INSERT INTO db_base_sessions (id, data, expires_at) VALUES ('s-2', '{:visitor \"bo\"}', 9999999999999)")
+      (ts/execute! url "INSERT INTO db_base_sessions (id, data, expires_at) VALUES ('s-1', '{:visitor \"ada\"}', 1)")
+      (db/stop handle)
+      (is (= [{:id "s-1" :data "{:visitor \"ada\"}" :expires-at 1}
+              {:id "s-2" :data "{:visitor \"bo\"}" :expires-at 9999999999999}]
+             (dbt/sessions cfg))
+          (str engine ": every row, ordered by id, the expired one included, the EDN as written —"
+               " read with the pool already closed, so through a connection of its own"))
+      (is (= {:id "s-2" :data "{:visitor \"bo\"}" :expires-at 9999999999999} (dbt/session cfg "s-2"))
+          (str engine ": one row by its id"))
+      (is (nil? (dbt/session cfg "no-such-session")) (str engine ": and nil for an id with no row")))))

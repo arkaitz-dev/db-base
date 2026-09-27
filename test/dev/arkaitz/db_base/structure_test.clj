@@ -1098,7 +1098,11 @@
     ;; touches a file (§5) or orchestrates a race, which each host builds differently.
     dev.arkaitz.db-base.testing        {rows    "SPEC §10: a reader that is not the code under test, Clob read as text"
                                         one     "SPEC §10: `rows` cut to one value"
-                                        parking "SPEC §10: one caller suspended between its statements, and how it ended"}
+                                        parking "SPEC §10: one caller suspended between its statements, and how it ended"
+                                        ;; 2026-09-28: the table's owner reads it, so a host's
+                                        ;; tests stop querying it by hand.
+                                        sessions "SPEC §10: every row of §8's table, through the test's own connection"
+                                        session  "SPEC §10: one row of §8's table by id, or nil"}
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
                                         reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
     dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"

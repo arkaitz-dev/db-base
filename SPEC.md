@@ -718,6 +718,12 @@ implementations of published third-party ports whose tables are its own. Since
   rather than raced for. Nothing that touches a file (§5 has no exemption, and a
   temporary database is a file), and no race orchestrator, because the three places that
   park orchestrate three different ways.
+  **Amended 2026-09-28, decided with the user**: `sessions` and `session`, the rows of
+  §8's table read the same way. Four hosts' tests had queried `db_base_sessions` by hand,
+  in thirteen places, and the table is this library's to reshape — a host that reads it
+  through its own SQL breaks when §8 migrates it, and a reader here moves with it in the
+  same commit. They read and never write: a test that must age a session writes its own
+  statement, knowing it reaches into this library's table.
 - **`dev.arkaitz.db-base/pool-stats`** (amended later the same day, from the review of
   whether this library is ready for production) — the pool's load as HikariCP counts it,
   `{:active :idle :total :waiting}`. Without it the pool was unobservable unless the host

@@ -4,8 +4,10 @@
   Nothing here is meant for a request path, and nothing here reads a file; a temporary
   database is the host's to make, because making one is a file.
 
-  Added 2026-09-25 from `demo-tasks/`, whose tests wrote both by hand. `structure_test`
-  pins the three public vars, and a fourth is an amendment of SPEC §10 before it is code."
+  Added 2026-09-25 from `demo-tasks/`, whose tests wrote both by hand; `sessions` and
+  `session` 2026-09-28, from four hosts that read §8's table by hand. `structure_test`
+  pins the public vars, and another is an amendment of SPEC §10 before it is code."
+  (:require [dev.arkaitz.db-base.session.schema :as schema])
   (:import [java.lang.reflect InvocationHandler InvocationTargetException Method Proxy]
            [java.sql Clob Connection Driver DriverManager PreparedStatement ResultSet SQLException]
            [java.util Properties]
@@ -77,6 +79,24 @@
   must match one row says so in its own `WHERE`."
   [config sql & params]
   (ffirst (apply rows config sql params)))
+
+(defn- session-row [[id data expires-at]]
+  {:id id :data data :expires-at expires-at})
+
+(defn sessions
+  "Every row of the session table SPEC §8's store keeps, ordered by id, as
+  `{:id … :data … :expires-at …}` — `:data` the EDN text the store wrote, unread, so no
+  reader is asked for; `:expires-at` epoch milliseconds. Read as `rows` reads, through a
+  connection opened from `config`: expired rows included, because expiry is the store's
+  judgement and this is the table."
+  [config]
+  (mapv session-row (rows config (str "SELECT id, data, expires_at FROM " schema/table " ORDER BY id"))))
+
+(defn session
+  "The row of the session table whose id is `id`, as `sessions` answers each, or nil."
+  [config id]
+  (some-> (first (rows config (str "SELECT id, data, expires_at FROM " schema/table " WHERE id = ?") id))
+          session-row))
 
 ;; --- parking ------------------------------------------------------------------
 
