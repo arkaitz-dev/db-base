@@ -15,7 +15,8 @@
             [dev.arkaitz.web-base.integrant :as wbi]
             [dev.arkaitz.web-base.testing :as wt]
             [integrant.core :as ig]
-            [next.jdbc :as jdbc]))
+            [next.jdbc :as jdbc]
+            [ring.mock.request :as mock]))
 
 (defn temp-db-path []
   (let [file (java.io.File/createTempFile "demo-ledger-" ".db")]
@@ -159,15 +160,41 @@
     (GET app jar "/")
     token))
 
-(defn with-host*
-  "The whole system up over a temporary database, and down however it ends."
+(defn- carrying-cookies
+  "`request` with the cookies `jar`'s browser holds."
+  [request jar]
+  (cond-> request
+    (seq (:jar @jar))
+    (mock/header "cookie" (str/join "; " (for [[k v] (:jar @jar)] (str k "=" v))))))
+
+(defn first-hop
+  "One request with this browser's cookies and, on a POST, the CSRF token of the last
+  page it saw — its redirect NOT followed. A followed redirect hides who answered: a
+  handler that sends to a gated page lands on the login exactly as the gate would."
+  [app jar method path]
+  (app (cond-> (carrying-cookies (mock/request method path) jar)
+         (= :post method) (mock/header "X-CSRF-Token" (:token @jar)))))
+
+(defn with-system*
+  "The whole system up over a temporary database, handed over whole — for a test
+  that reads what the handler was built from — and down however it ends."
   [f]
   (let [path (temp-db-path)]
     (try
       (let [system (ig/init (host-config path) [:dev.arkaitz.web-base/handler])]
-        (try (f (get system :dev.arkaitz.web-base/handler) path)
+        (try (f system path)
              (finally (ig/halt! system))))
       (finally (delete-db! path)))))
+
+(defmacro with-system
+  "`(with-system [system path] …)`"
+  [[system path] & body]
+  `(with-system* (fn [~system ~path] ~@body)))
+
+(defn with-host*
+  "The whole system up over a temporary database, and down however it ends."
+  [f]
+  (with-system* (fn [system path] (f (get system :dev.arkaitz.web-base/handler) path))))
 
 (defmacro with-host
   "`(with-host [app path] …)`"

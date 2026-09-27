@@ -61,18 +61,18 @@
     {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))
 
 (defn routes [db ceremony]
-  (let [gated (fn [m] (assoc m :wb/gate wb/subject-present?))]
-    [["" {:wb/layouts [views/shell-layout]}
-      (into (auth/routes ceremony {:view        views/login
-                                   :login-path  "/login"
-                                   :logout-path "/logout"
-                                   :rate-limit  {:limit 5 :window-ms (* 15 60 1000)}})
-            [["/" (gated {:get {:handler (partial home db)}})]
-             ["/events" (gated {:post {:handler (partial create-event db)}})]
-             ["/events/:id" (gated {:get {:handler (partial event-page db)}})]
-             ["/events/:id/join" (gated {:post {:handler (partial join db)}})]
-             ["/events/:id/leave" (gated {:post {:handler (partial leave db)}})]
-             ["/events/:id/delete" (gated {:post {:handler (partial delete-event db)}})]])]]))
+  [["" {:wb/layouts [views/shell-layout]}
+    (into (auth/routes ceremony {:view        views/login
+                                 :login-path  "/login"
+                                 :logout-path "/logout"
+                                 :rate-limit  {:limit 5 :window-ms (* 15 60 1000)}})
+          [["" {:wb/gate wb/subject-present?}
+            ["/" {:get {:handler (partial home db)}}]
+            ["/events" {:post {:handler (partial create-event db)}}]
+            ["/events/:id" {:get {:handler (partial event-page db)}}]
+            ["/events/:id/join" {:post {:handler (partial join db)}}]
+            ["/events/:id/leave" {:post {:handler (partial leave db)}}]
+            ["/events/:id/delete" {:post {:handler (partial delete-event db)}}]]])]])
 
 (defn sessionless
   "What web-base answers before the session: a probe must not need one, and with a

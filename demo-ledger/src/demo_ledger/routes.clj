@@ -87,19 +87,19 @@
     {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))
 
 (defn routes [db ceremony]
-  (let [gated (fn [m] (assoc m :wb/gate wb/subject-present?))]
-    [["" {:wb/layouts [views/shell-layout]}
-      (into (auth/routes ceremony {:view        views/login
-                                   :login-path  "/login"
-                                   :logout-path "/logout"
-                                   :rate-limit  {:limit 5 :window-ms (* 15 60 1000)}})
-            [["/" (gated {:get {:handler (partial home db)}})]
-             ["/groups" (gated {:post {:handler (partial create-group db)}})]
-             ["/groups/:id" (gated {:get {:handler (partial group-page db)}})]
-             ["/groups/:id/expenses" (gated {:post {:handler (partial add-expense db)}})]
-             ["/groups/:id/expenses/:expense/delete" (gated {:post {:handler (partial delete-expense db)}})]
-             ["/groups/:id/invitations" (gated {:post {:handler (partial invite db ceremony)}})]
-             ["/invitations/:id/accept" (gated {:post {:handler (partial accept db)}})]])]]))
+  [["" {:wb/layouts [views/shell-layout]}
+    (into (auth/routes ceremony {:view        views/login
+                                 :login-path  "/login"
+                                 :logout-path "/logout"
+                                 :rate-limit  {:limit 5 :window-ms (* 15 60 1000)}})
+          [["" {:wb/gate wb/subject-present?}
+            ["/" {:get {:handler (partial home db)}}]
+            ["/groups" {:post {:handler (partial create-group db)}}]
+            ["/groups/:id" {:get {:handler (partial group-page db)}}]
+            ["/groups/:id/expenses" {:post {:handler (partial add-expense db)}}]
+            ["/groups/:id/expenses/:expense/delete" {:post {:handler (partial delete-expense db)}}]
+            ["/groups/:id/invitations" {:post {:handler (partial invite db ceremony)}}]
+            ["/invitations/:id/accept" {:post {:handler (partial accept db)}}]]])]])
 
 (defn sessionless
   "What web-base answers before the session: a probe must not need one, and with a

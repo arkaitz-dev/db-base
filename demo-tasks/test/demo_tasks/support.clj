@@ -126,14 +126,19 @@
   (let [response (GET app jar path)]
     [(:status response) (:path @jar)]))
 
+(defn- carrying-cookies
+  "`request` with the cookies `jar`'s browser holds."
+  [request jar]
+  (cond-> request
+    (seq (:jar @jar))
+    (mock/header "cookie" (str/join "; " (for [[k v] (:jar @jar)] (str k "=" v))))))
+
 (defn GET-unfollowed
   "One request with this browser's cookies, its redirect NOT followed — for the one
   test that observes the redemption hop itself, which the browser would otherwise
   merge with the page it lands on."
   [app jar path]
-  (let [response (app (cond-> (mock/request :get path)
-                        (seq (:jar @jar))
-                        (mock/header "cookie" (str/join "; " (for [[k v] (:jar @jar)] (str k "=" v))))))]
+  (let [response (app (carrying-cookies (mock/request :get path) jar))]
     ;; The cookies it set go into the jar as the browser's own would, a deletion
     ;; forgotten, so the next ordinary visit carries the session this one minted.
     (swap! jar #(assoc (or % (wt/browser app))
@@ -162,15 +167,34 @@
     (GET app jar "/")
     token))
 
-(defn with-host*
-  "The whole system up over a temporary database, and down however it ends."
+(defn first-hop
+  "One request with this browser's cookies and, on a POST, the CSRF token of the last
+  page it saw — its redirect NOT followed. A followed redirect hides who answered: a
+  handler that sends to a gated page lands on the login exactly as the gate would."
+  [app jar method path]
+  (app (cond-> (carrying-cookies (mock/request method path) jar)
+         (= :post method) (mock/header "X-CSRF-Token" (:token @jar)))))
+
+(defn with-system*
+  "The whole system up over a temporary database, handed over whole — for a test
+  that reads what the handler was built from — and down however it ends."
   [f]
   (let [path (temp-db-path)]
     (try
       (let [system (ig/init (host-config path) [:dev.arkaitz.web-base/handler])]
-        (try (f (get system :dev.arkaitz.web-base/handler) path)
+        (try (f system path)
              (finally (ig/halt! system))))
       (finally (delete-db! path)))))
+
+(defmacro with-system
+  "`(with-system [system path] …)`"
+  [[system path] & body]
+  `(with-system* (fn [~system ~path] ~@body)))
+
+(defn with-host*
+  "The whole system up over a temporary database, and down however it ends."
+  [f]
+  (with-system* (fn [system path] (f (get system :dev.arkaitz.web-base/handler) path))))
 
 (defmacro with-host
   "`(with-host [app path] …)`"

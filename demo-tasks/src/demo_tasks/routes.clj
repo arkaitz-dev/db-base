@@ -98,26 +98,19 @@
     {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))
 
 (defn- owned
-  "The routes only a signed-in person reaches. `:wb/gate` is route data rather
-  than middleware, so the guard is visible beside the route it guards instead
-  of being somewhere up a stack."
+  "The routes only a signed-in person reaches, under one gated parent: the gate is
+  route data, so every route nested here inherits it, and one added later is private
+  without anybody remembering to say so."
   [db ceremony store]
-  [["/" {:wb/gate wb/subject-present?
-         :get {:handler (partial home db)}}]
-   ["/sessions" {:wb/gate wb/subject-present?
-                 :get {:handler (partial sessions db)}}]
-   ["/sessions/:id/end" {:wb/gate wb/subject-present?
-                         :post {:handler (partial end-session db store)}}]
-   ["/tasks" {:wb/gate wb/subject-present?
-              :post {:handler (partial add db)}}]
-   ["/tasks/:id" {:wb/gate wb/subject-present?
-                  :post {:handler (partial rename db)}}]
-   ["/tasks/:id/toggle" {:wb/gate wb/subject-present?
-                         :post {:handler (partial toggle db)}}]
-   ["/tasks/:id/delete" {:wb/gate wb/subject-present?
-                         :post {:handler (partial remove-task db)}}]
-   ["/revoke" {:wb/gate wb/subject-present?
-               :post {:handler (partial revoke db ceremony)}}]])
+  [["" {:wb/gate wb/subject-present?}
+    ["/" {:get {:handler (partial home db)}}]
+    ["/sessions" {:get {:handler (partial sessions db)}}]
+    ["/sessions/:id/end" {:post {:handler (partial end-session db store)}}]
+    ["/tasks" {:post {:handler (partial add db)}}]
+    ["/tasks/:id" {:post {:handler (partial rename db)}}]
+    ["/tasks/:id/toggle" {:post {:handler (partial toggle db)}}]
+    ["/tasks/:id/delete" {:post {:handler (partial remove-task db)}}]
+    ["/revoke" {:post {:handler (partial revoke db ceremony)}}]]])
 
 (defn- auth-routes
   "auth-base's own four routes, with its logout wrapped so that this host forgets
@@ -145,7 +138,7 @@
                                          (logout request))}}]]))
 
 (defn routes
-  "auth-base's four routes and this host's six, under one layout. `/health` is
+  "auth-base's four routes and this host's eight, under one layout. `/health` is
   `sessionless`'s, outside the session: a probe wants a status line, not a page."
   [db ceremony store]
   [["" {:wb/layouts [views/shell-layout]}
