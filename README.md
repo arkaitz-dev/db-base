@@ -33,7 +33,7 @@ So a host declares, besides this library:
 | the JDBC driver (`org.postgresql/postgresql`, `org.xerial/sqlite-jdbc`, …) | always |
 | `ring/ring-core` | with the session store — web-base and auth-base already bring it |
 | `com.github.seancorfield/next.jdbc` | when the host queries, and for auth-base's `jdbc` store |
-| a logging backend (`ch.qos.logback/logback-classic`, …) | or HikariCP and the host log nowhere |
+| a logging backend (`ch.qos.logback/logback-classic`, …) | or HikariCP and the host log nowhere — and SLF4J says so on stderr; `org.slf4j/slf4j-nop` is the backend that silences it |
 | a test runner and `ring/ring-mock` | in the host's test alias |
 
 ## The lifecycle: three functions
@@ -77,6 +77,14 @@ prefix, name each migration `001-accounts.up.sql` — the id is everything befor
 applied in order — or write it as EDN. A file ragtime would pass over, such as
 `001-accounts.sql`, is refused at boot rather than left unapplied.
 
+**One statement per file, or ragtime's separator between them.** ragtime runs a SQL
+file as one statement unless a line holding only `--;;` splits it, or unless it is split
+across numbered files, `001-auth.up.1.sql`, `001-auth.up.2.sql`, run in order as one
+migration. It never parses SQL, and neither does this library. What a driver does with
+several statements in one is the driver's: PostgreSQL and H2 run them all, and SQLite's
+runs **the first and silently drops the rest** — the migration is recorded as applied,
+the tables after the first never exist, and the next boot has nothing left to apply.
+
 Every failure is an `ex-info` whose data carries `:config-key` as a vector path, plus
 `:migration-id` when one migration is to blame. The JDBC URL and the password are never
 echoed, in the message or in the data.
@@ -100,6 +108,14 @@ you send it afterwards.
 ;; a session longer than the table holds (4000 characters of EDN) is refused, the same on every engine
 (session/reclaim-expired! handle)   ; the operator's sweep, and the only one there is
 ```
+
+`store` reads its table once, for no row, when it is built, so a handle whose boot said
+`:sessions :none` is refused there — naming `[:sessions]` — rather than as the engine's
+refusal on every request that touches a session.
+
+Expiry is judged by the clock of the instance serving the request, never the database's:
+behind a load balancer, keep the instances' clocks synchronised, or one expires a
+session early that another would still honour.
 
 A session is stored as EDN, so `:readers` is the tag readers for anything tagged a host
 puts in it — `{}` when it holds only plain data. A session whose tag has no reader is
@@ -194,7 +210,14 @@ instead — see the recipes below.
   the guard did — assert it. Stop the handle you passed in, not `:handle`; a pool of one
   deadlocks.
 
-It makes no temporary database: that is a file, and this library reads none.
+- **`sessions` and `session`** read §8's table the same way — every row ordered by id,
+  or one by id, as `{:id :data :expires-at}` with `:data` the EDN text as written — so a
+  host's tests never query `db_base_sessions` by hand, and this library can reshape it.
+
+It makes no temporary database: that is a file, and this library reads none. On SQLite
+that file is not optional: under a pool, `jdbc:sqlite::memory:` is a separate empty
+database per connection, so boot migrates one and a request, or `rows`, reads another.
+Use a temporary file.
 
 ## Recipes a host keeps relearning
 
@@ -209,6 +232,9 @@ It makes no temporary database: that is a file, and this library reads none.
   event and then books a place: the loser of the race got that error, an intermittent 500.
   `IMMEDIATE` takes the write lock when the transaction begins, so the other writer waits
   instead. The URL is yours, which is why this library has no knob for it.
+- **The SQLite driver loads native code**, and a recent JDK prints four `WARNING: A
+  restricted method…` lines on every start unless the JVM is told it may:
+  `:jvm-opts ["--enable-native-access=ALL-UNNAMED"]` in the alias that runs it.
 - **A write that may collide inside a transaction is written conditionally**, not
   arbitrated: `INSERT INTO membership (…) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM
   membership WHERE …)`. On PostgreSQL a refused statement aborts the whole transaction, so
