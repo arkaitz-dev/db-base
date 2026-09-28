@@ -12,6 +12,7 @@
   page by itself, as `/revoke` does for a visitor with no subject, sends neither."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
+            [clojure.tools.logging.test :as lt]
             [hosts.support :as s]
             [demo-tasks.system]
             [dev.arkaitz.web-base :as wb]
@@ -84,3 +85,18 @@
                    (:status response) " " (select-keys (:headers response) ["Location" "Cache-Control" "Vary"])
                    " — a 403 means CSRF refused it before any gate, a 303 without the refusal's headers"
                    " that the handler answered, a 500 that something threw")))))))
+
+(deftest a-sign-in-leaves-its-token-in-no-log-line
+  ;; This host builds auth-base's routes itself, to wrap the logout; a copy of them once
+  ;; lost the route data that keeps the redemption's token out of the access line.
+  (s/with-host [app path]
+    (lt/with-log
+      (let [token  (s/sign-in! app path (s/browser) "ada@example.test")
+            access (->> (lt/the-log)
+                        (filter #(= 'dev.arkaitz.web-base.log (ns-name (:logger-ns %))))
+                        (mapv :message))]
+        (is (string? token) "witness: a link was issued and followed")
+        (is (some #(str/starts-with? % "GET /login/redeem/:token 303") access)
+            (str "the redemption is logged by its template: " access))
+        (is (not-any? #(str/includes? (str %) token) (map (juxt :message :throwable) (lt/the-log)))
+            "and the token reaches no line")))))

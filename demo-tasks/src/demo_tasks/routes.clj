@@ -125,26 +125,28 @@
   "auth-base's own four routes, with its logout wrapped so that this host forgets
   its record of the device in the same act.
 
-  `auth/routes` would hand back exactly this vector; building it from
-  `auth/handlers` is what makes room for the wrapper, and the shape is copied
-  from that function so the two cannot drift apart without this comment being
-  wrong. The wrapper runs BEFORE the logout, because it needs `:session/key` —
-  which names the session about to be deleted — and `:wb/subject`, which the
-  response is about to take away.
+  Taken from `auth/routes` itself and only the logout's handler replaced, so whatever
+  else auth-base puts in its route data — `:wb/log-path` on the redemption, which keeps
+  the token out of the access log — reaches this host too. A copy of the vector did
+  not: when auth-base 0.7.0 added that key, this host's redemption went on logging its
+  token. The wrapper runs BEFORE the logout, because it needs `:session/key` — which
+  names the session about to be deleted — and `:wb/subject`, which the response is
+  about to take away.
 
-  **Why it is worth the extra six lines.** Without it, logging out deletes the
-  session row and leaves this host's record of it behind, so the next visit
-  lists a device that names nothing. Harmless to end, confusing to read, and a
-  poor advertisement for the one feature that justifies a server-side session."
+  **Why it is worth the extra lines.** Without it, logging out deletes the session row
+  and leaves this host's record of it behind, so the next visit lists a device that
+  names nothing. Harmless to end, confusing to read, and a poor advertisement for the
+  one feature that justifies a server-side session."
   [db ceremony opts]
-  (let [{:keys [paths form issue redeem logout]} (auth/handlers ceremony opts)]
-    [[(:login paths)  {:get {:handler form} :post {:handler issue}}]
-     [(:redeem paths) {:get {:handler redeem}}]
-     [(:logout paths) {:post {:handler (fn [request]
-                                         (devices/forget! db
-                                                          (:wb/subject request)
-                                                          (:session/key request))
-                                         (logout request))}}]]))
+  (mapv (fn [[path data]]
+          (if (= path (:logout-path opts))
+            [path (update-in data [:post :handler]
+                             (fn [logout]
+                               (fn [request]
+                                 (devices/forget! db (:wb/subject request) (:session/key request))
+                                 (logout request))))]
+            [path data]))
+        (auth/routes ceremony opts)))
 
 (defn routes
   "auth-base's four routes and this host's eight, under one layout. `/health` is
