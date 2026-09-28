@@ -176,8 +176,8 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 - [x] **The host template**, 2026-09-28: `../app-template`, a deps-new template
       (`dev.arkaitz/app`) cut from these hosts, minimal by the user's choice — sign-in,
       one gated page, /health, sessions in a row, a sweeper for sessions and challenges.
-      `bin/verify` there generates two projects and runs their suites. Local only until
-      the user decides where it is published.
+      `bin/verify` there generates two projects and runs their suites. Published as a
+      **private** repository, `arkaitz-dev/app-template`, while it is iterated on.
 - [x] **A host of all three libraries**, 2026-09-22: `demo-tasks/`, a CRUD application
       with magic-link sign-in over web-base, auth-base and this library. It writes the
       adapter rule 3 forbids here — auth-base's five-method `Store` over the datasource
