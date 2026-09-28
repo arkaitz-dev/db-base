@@ -71,7 +71,7 @@ backend arriving through a test extra "reds falsely but visibly, and the fix is 
 it, never to filter the scan". They are four aliases and two directories, and nothing a
 consumer receives changes because either exists.
 
-Every host consumes **web-base 0.7.0 and auth-base 0.5.0 as releases** (2026-09-28),
+Every host consumes **web-base 0.7.0 and auth-base 0.5.1 as releases** (2026-09-28),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
@@ -185,7 +185,7 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
 - [x] **auth-base's login form bounds the identifier before normalising it** — **fixed in
       auth-base 0.5.1** (`b6ef21f`, 2026-09-28), with the default normal form made
       independent of the JVM's locale (`2d64192`: under tr_TR it had turned `ADA@IX.TEST`
-      into `ada@ıx.test`). Pending the user's deploy; the hosts move to 0.5.1 after it.
+      into `ada@ıx.test`). Deployed and verified 2026-09-28; the hosts are on it.
       web-base still lower-cases header names with the default locale in several places
       (`security.clj`, `render.clj`, `testing.clj`) — consistent within one JVM, so no
       defect is known, but unaudited. Originally (found
