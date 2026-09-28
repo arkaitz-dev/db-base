@@ -5,7 +5,7 @@
   and a claim that db-base will find them, and a test that needed the whole
   system to say so would be testing the wrong thing."
   (:require [clojure.test :refer [deftest is]]
-            [demo-tasks.support :refer [config delete-db! rows temp-db-path]]
+            [hosts.support :refer [config delete-db! rows temp-db-path]]
             [dev.arkaitz.db-base :as db])
   (:import [clojure.lang ExceptionInfo]))
 

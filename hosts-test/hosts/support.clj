@@ -1,6 +1,9 @@
-(ns demo-tasks.support
-  "What every suite here needs: a database of its own, and a way to read it that
-  does not go through the code under test.
+(ns hosts.support
+  "What every host's suite here needs: a database of its own, and a way to read it that
+  does not go through the code under test. One namespace for the three hosts on all
+  three libraries, on each one's `-test` alias and never on `:test`; what differs
+  between them is read from the `config.edn` their alias puts on the classpath — the
+  URL and its pragmas, the migration directory, the name the host's keys live under.
 
   **The second connection is the point.** A test that verifies a write by
   calling the function that performed it is asking the same code twice and
@@ -18,8 +21,16 @@
             [integrant.core :as ig]
             [next.jdbc :as jdbc]))
 
+(def ^:private host-config-edn
+  "The host's own `config.edn`, as its system reads it."
+  (wbi/read-string (slurp (io/resource "config.edn"))))
+
+(def ^:private web-config-key
+  "The host's own `…/web-config` key: its namespace is the host's name."
+  (first (filter #(= "web-config" (name %)) (keys host-config-edn))))
+
 (defn temp-db-path []
-  (let [file (java.io.File/createTempFile "demo-tasks-" ".db")]
+  (let [file (java.io.File/createTempFile (str (namespace web-config-key) "-") ".db")]
     (.delete file)
     (.deleteOnExit file)
     (.getAbsolutePath file)))
@@ -31,33 +42,42 @@
   (doseq [suffix ["" "-journal" "-wal" "-shm"]]
     (.delete (io/file (str path suffix)))))
 
-(def ^:private pragmas
-  "Journal mode and a busy timeout, in the JDBC URL because that is the host's
-  and db-base's configuration surface is closed to driver knobs on purpose.
+(def ^:private host-url
+  "The JDBC URL the host's own `config.edn` names. Tests keep its query string and
+  change only the file, so a pragma deleted from the resource — `foreign_keys=true`
+  above all — is deleted from every test too, instead of surviving in a copy here."
+  (get-in host-config-edn [:dev.arkaitz.db-base/database :jdbc-url]))
 
-  **WAL is load-bearing for the interleaving test, not a performance choice.**
-  In SQLite's default rollback journal a reader blocks a writer, so a test that
-  suspends one caller between its statements and runs another to completion
-  deadlocks instead of interleaving — and then the hang guard fires and the
-  deadline has become the oracle, which is the one thing such a test may never
-  do. The busy timeout bounds the wait for the ordinary contention underneath."
-  "?journal_mode=WAL&busy_timeout=5000")
+(def ^:private pragmas
+  "The URL's query string. WAL is load-bearing for the interleaving tests, not a
+  performance choice: in SQLite's default rollback journal a reader blocks a writer, so
+  a test that suspends one caller between its statements and runs another to completion
+  deadlocks instead of interleaving — and then the hang guard fires and the deadline has
+  become the oracle."
+  (subs host-url (str/index-of host-url "?")))
+
+(defn url-without-foreign-keys
+  "The host's URL over `path` with `foreign_keys=true` taken out — for the one control
+  that shows the cascade is that pragma's doing, and for planting a row the schema
+  would refuse."
+  [path]
+  (str "jdbc:sqlite:" path (str/replace pragmas "&foreign_keys=true" "")))
 
 (defn config
-  "What this host hands `db-base/start`, over `path` rather than the file its
-  own resource names."
+  "What this host hands `db-base/start` — its own `config.edn` entry — over `path`
+  rather than the file its resource names."
   [path]
-  {:jdbc-url   (str "jdbc:sqlite:" path pragmas)
-   :user       ""
-   :password   ""
-   :pool       {:max 4 :timeout-ms 5000}
-   :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
-   :sessions   {:lock-wait-ms 5000}})
+  (assoc (:dev.arkaitz.db-base/database host-config-edn) :jdbc-url (str "jdbc:sqlite:" path pragmas)))
 
 (defn datasource
-  "For the writes a test plants itself, which db-base's reader does not do."
-  [path]
-  (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" path pragmas)}))
+  "For the writes a test plants itself, which db-base's reader does not do. With
+  `{:foreign-keys? false}`, a connection that lets a test plant what the schema
+  would refuse."
+  ([path] (datasource path {:foreign-keys? true}))
+  ([path {:keys [foreign-keys?]}]
+   (jdbc/get-datasource {:jdbcUrl (if foreign-keys?
+                                    (str "jdbc:sqlite:" path pragmas)
+                                    (url-without-foreign-keys path))})))
 
 (defn rows
   "Every row of `sql`, as vectors, through a connection of the test's own."
@@ -103,10 +123,9 @@
 (defn host-config
   "The host's own `config.edn`, over `path` instead of the file it names."
   [path]
-  (-> (wbi/read-string (slurp (io/resource "config.edn")))
-      (assoc-in [:dev.arkaitz.db-base/database :jdbc-url]
-                (str "jdbc:sqlite:" path "?journal_mode=WAL&busy_timeout=5000"))
-      (assoc-in [:demo-tasks/web-config :session-lifetime-ms] session-lifetime-ms)))
+  (-> host-config-edn
+      (assoc-in [:dev.arkaitz.db-base/database :jdbc-url] (str "jdbc:sqlite:" path pragmas))
+      (assoc-in [web-config-key :session-lifetime-ms] session-lifetime-ms)))
 
 (defn browser
   "One person's browser, held in an atom so a test reads as a sequence of clicks.
@@ -128,12 +147,17 @@
   (visit! app jar :post path params))
 
 (defn landed
-  "`[status path]` of where `jar` is after GETting `path` — the status of the page
-  it ended on and the address bar. The pair and never the status alone: redirects
-  are followed, so a signed-out visit to `/` ends on the login page with a 200 as
-  well, and only the path tells the two apart."
+  "`[status path]` of where `jar` is after GETting `path`: the status of the page it
+  ended on and the address bar. The pair and never the status alone — redirects are
+  followed, so a signed-out visit ends on the login page with a 200 as well."
   [app jar path]
   (let [response (GET app jar path)]
+    [(:status response) (:path @jar)]))
+
+(defn posted
+  "`[status path]` after POSTing `params` to `path`, as `landed` reads a GET."
+  [app jar path params]
+  (let [response (POST app jar path params)]
     [(:status response) (:path @jar)]))
 
 (defn session-key-of

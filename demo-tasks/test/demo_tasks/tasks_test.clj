@@ -9,7 +9,7 @@
   which proves the route layer does not leak what the SQL protects — belongs to
   the seam test and is a different claim."
   (:require [clojure.test :refer [deftest is testing]]
-            [demo-tasks.support :as support :refer [with-db]]
+            [hosts.support :as support :refer [with-db]]
             [demo-tasks.tasks :as tasks]))
 
 (def ^:private ada "11111111-1111-1111-1111-111111111111")

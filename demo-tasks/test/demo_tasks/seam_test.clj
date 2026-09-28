@@ -15,7 +15,7 @@
   test can be sure it has the token that was actually issued."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
-            [demo-tasks.support :as support
+            [hosts.support :as support
              :refer [GET POST browser challenge-token hop landed session-key-of sign-in! with-host]]
             [demo-tasks.system]
             [integrant.core :as ig]

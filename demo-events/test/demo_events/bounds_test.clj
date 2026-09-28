@@ -5,7 +5,7 @@
   writes nothing, and exactly its column's width is written — the control that the POST
   reached the handler at all, and that the bound is not one short."
   (:require [clojure.test :refer [deftest is]]
-            [demo-events.support :as s :refer [with-host]]
+            [hosts.support :as s :refer [with-host]]
             [demo-events.system]))
 
 (defn- text [n] (apply str (repeat n "x")))

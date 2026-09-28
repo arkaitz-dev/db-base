@@ -17,7 +17,7 @@
   reverse of the subjects' order, so a query that sorted by subject would be caught."
   (:require [clojure.test :refer [deftest is testing]]
             [demo-events.events :as events]
-            [demo-events.support :as support :refer [with-db]]
+            [hosts.support :as support :refer [with-db]]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]

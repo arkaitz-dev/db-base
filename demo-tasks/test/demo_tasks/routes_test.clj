@@ -12,7 +12,7 @@
   page by itself, as `/revoke` does for a visitor with no subject, sends neither."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
-            [demo-tasks.support :as s]
+            [hosts.support :as s]
             [demo-tasks.system]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.testing :as wt]

@@ -16,7 +16,7 @@
   positively rather than left as an absence."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [demo-tasks.support :as support :refer [GET POST browser landed session-key-of sign-in!]]
+            [hosts.support :as support :refer [GET POST browser landed session-key-of sign-in!]]
             [demo-tasks.system]
             [dev.arkaitz.web-base :as wb]
             [integrant.core :as ig]))

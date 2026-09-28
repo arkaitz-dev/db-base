@@ -123,7 +123,7 @@
                              ch.qos.logback/logback-classic    {:mvn/version "1.6.3"}}
                :main-opts   ["-m" "demo-tasks.main"]}
 
-  :demo-tasks-test {:extra-paths ["demo-tasks/src" "demo-tasks/resources" "demo-tasks/test"]
+  :demo-tasks-test {:extra-paths ["demo-tasks/src" "demo-tasks/resources" "demo-tasks/test" "hosts-test"]
                     :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.8.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.6.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
@@ -147,7 +147,7 @@
                              ch.qos.logback/logback-classic    {:mvn/version "1.6.3"}}
                :main-opts   ["-m" "demo-ledger.main"]}
 
-  :demo-ledger-test {:extra-paths ["demo-ledger/src" "demo-ledger/resources" "demo-ledger/test"]
+  :demo-ledger-test {:extra-paths ["demo-ledger/src" "demo-ledger/resources" "demo-ledger/test" "hosts-test"]
                     :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.8.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.6.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}
@@ -166,7 +166,7 @@
                              ch.qos.logback/logback-classic    {:mvn/version "1.6.3"}}
                :main-opts   ["-m" "demo-events.main"]}
 
-  :demo-events-test {:extra-paths ["demo-events/src" "demo-events/resources" "demo-events/test"]
+  :demo-events-test {:extra-paths ["demo-events/src" "demo-events/resources" "demo-events/test" "hosts-test"]
                     :extra-deps  {dev.arkaitz/web-base              {:mvn/version "0.8.0"}
                                   dev.arkaitz/auth-base             {:mvn/version "0.6.0"}
                                   org.xerial/sqlite-jdbc            {:mvn/version "3.53.4.0"}

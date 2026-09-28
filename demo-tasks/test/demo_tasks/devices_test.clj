@@ -7,7 +7,7 @@
   the control, is the seam test's claim and a different one."
   (:require [clojure.test :refer [deftest is testing]]
             [demo-tasks.devices :as devices]
-            [demo-tasks.support :as support :refer [with-db]]
+            [hosts.support :as support :refer [with-db]]
             [next.jdbc :as jdbc])
   (:import [java.sql SQLException]))
 

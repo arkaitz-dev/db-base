@@ -7,7 +7,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [demo-ledger.ledger :as ledger]
             [demo-ledger.money :as money]
-            [demo-ledger.support :as support :refer [with-db]]
+            [hosts.support :as support :refer [with-db]]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]

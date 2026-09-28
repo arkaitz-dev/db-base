@@ -3,7 +3,7 @@
   read back through a second connection."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [demo-events.support :as support
+            [hosts.support :as support
              :refer [GET POST browser landed posted sign-in! with-host]]
             [demo-events.system]
             [integrant.core :as ig]
