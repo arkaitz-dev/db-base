@@ -19,16 +19,16 @@
                 [:button {:type "submit"} "Log out"]]
                [:span "not signed in"])}))
 
-(defn login [request {:keys [sent? spent? limited?]}]
+(defn login [request {:keys [sent? spent? limited? action field]}]
   (list
    [:h2 "Sign in"]
    (when sent? [:p.ok [:strong "A link is on its way."] " In this demo it is printed to the server's console."])
    (when spent? [:p.error [:strong "That link no longer works."]])
    (when limited? [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
-   [:form {:method "post" :action "/login"}
+   [:form {:method "post" :action action}
     (security/csrf-field request)
     [:label "Email address "
-     [:input {:type "email" :name "identifier" :required true :autofocus true}]]
+     [:input {:type "email" :name field :required true :autofocus true}]]
     " " [:button {:type "submit"} "Send me a link"]]))
 
 (defn- post-form [request action & body]

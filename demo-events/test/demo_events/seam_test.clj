@@ -116,3 +116,36 @@
       (is (= (repeat 3 [200 "ok"]) answers) "the probe is answered from the database")
       (is (= [] (support/sessions path))
           "and leaves no session row behind"))))
+
+(defn- login-form
+  "`[action field]` of the one form on `html` that holds an email input — its `action`
+  and that input's `name`, read off the rendered page as a browser reads them — or nil
+  when there is not exactly one such form."
+  [html]
+  (let [forms (filter #(str/includes? % "type=\"email\"") (re-seq #"(?s)<form\b[^>]*>.*?</form>" html))
+        attr  (fn [tag k] (some->> tag (re-find (re-pattern (str "\\b" k "=\"([^\"]*)\""))) second))]
+    (when (= 1 (count forms))
+      [(attr (re-find #"<form\b[^>]*>" (first forms)) "action")
+       (attr (re-find #"<input\b[^>]*type=\"email\"[^>]*>" (first forms)) "name")])))
+
+(deftest the-login-form-posts-its-address-where-a-link-is-issued
+  ;; Every other sign-in in this suite posts to a path and a field it spells itself, so
+  ;; none of them reads the form the view draws. This one spells neither: it asks for a
+  ;; gated page signed out, lands wherever the gate sends it, and sends what that page says.
+  (with-host [app path]
+    (let [jar            (browser)
+          page           (GET app jar "/")
+          [action field] (login-form (str (:body page)))]
+      (is (= 200 (:status page)) "control: the gate's login page answers")
+      (is (and (string? action) (string? field))
+          (str "control: the page has one email form, with an action and a named input: " (:body page)))
+      (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM login_challenge"))
+          "control: no challenge exists before the form is sent")
+      ;; DELIBERATE: without both the POST has nowhere to go; the control above has
+      ;; already failed, naming the page.
+      (when (and action field)
+        (let [answer (POST app jar action {field "ada@example.test"})]
+          (is (= [[1]] (support/rows path "SELECT COUNT(*) FROM login_challenge WHERE identifier = ?"
+                                     "ada@example.test"))
+              (str "the address, posted where the form says under the name it says, issued one link — form: "
+                   [action field] ", answered " (:status answer) " at " (:path @jar))))))))

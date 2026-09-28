@@ -34,7 +34,7 @@
   "The one view auth-base asks this host for. It is handed the request and one
   of four states and returns Hiccup, without auth-base knowing that web-base
   or this layout exist."
-  [request {:keys [sent? spent? limited?]}]
+  [request {:keys [sent? spent? limited? action field]}]
   (list
    [:h2 "Sign in"]
    (when sent?
@@ -44,10 +44,10 @@
      [:p.error [:strong "That link no longer works."] " It is good once, and it expires."])
    (when limited?
      [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
-   [:form {:method "post" :action "/login"}
+   [:form {:method "post" :action action}
     (security/csrf-field request)
     [:label "Email address "
-     [:input {:type "email" :name "identifier" :required true :autofocus true
+     [:input {:type "email" :name field :required true :autofocus true
               :placeholder "ada@example.test"}]]
     " "
     [:button {:type "submit"} "Send me a link"]]
