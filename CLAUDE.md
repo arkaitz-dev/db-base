@@ -22,7 +22,10 @@ proof 2026-09-20, §10's Integrant key the same day, §8's session store 2026-09
 Everything the specification asks for is written and tested. **Released as
 `dev.arkaitz/db-base 0.1.0` on Clojars 2026-09-26** (tag `v0.1.0` at `fe535b1`, verified
 from an isolated Maven repo), and the repository is public; **0.2.0 on 2026-09-28**, with
-the store refusing a boot without its table and `testing/sessions`/`session`. Every public var of `src`
+the store refusing a boot without its table and `testing/sessions`/`session`; **0.2.1 and
+0.2.2 on 2026-09-28** — the over-long refusal's `:config-key`, and
+`dev.arkaitz.db-base.native` for GraalVM images (0.2.2 fixes 0.2.1's doubled module
+prefix on GraalVM CE 25.0.4). Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
