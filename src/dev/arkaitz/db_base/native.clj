@@ -20,8 +20,13 @@
 (defmethod resauce/url-dir "resource" [^URL url]
   ;; Children are resolved against the directory's own URL, so they keep its handler: a
   ;; `resource:` URL cannot be built from a string on a JVM that has none registered.
+  ;; Relative to its last segment, never by its absolute path: GraalVM 25.0.4 spells a
+  ;; directory `resource:/0!/shop/migration`, and its handler prefixes the module again to
+  ;; an absolute spec, giving `/0!/0!/…` (measured, 2026-09-28).
   (let [path (.getPath url)
-        dir  (URL. url (if (str/ends-with? path "/") path (str path "/")))]
+        dir  (if (str/ends-with? path "/")
+               url
+               (URL. url (str (subs path (inc (str/last-index-of path "/"))) "/")))]
     ;; Read through the URL itself, never clojure.java.io, which §5's scan keeps out of
     ;; src: this library opens nothing it was not handed, and it was handed this URL.
     (with-open [reader (BufferedReader. (InputStreamReader. (.openStream url) "UTF-8"))]
