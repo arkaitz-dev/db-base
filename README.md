@@ -118,6 +118,12 @@ this library wrote is still there, unreachable until `reclaim-expired!` finds it
 `:sessions :none` is refused there — naming `[:sessions]` — rather than as the engine's
 refusal on every request that touches a session.
 
+**The expiry is absolute, not sliding.** A row's expiry is set when the row is written,
+and a signed-in page in steady state writes nothing — so a person active all afternoon is
+signed out `:lifetime-ms` after the last write (the login, or the first page that minted
+a CSRF token), however busy they were. Choose the lifetime for that, or have a page write
+the session on purpose when you want it to slide.
+
 Expiry is judged by the clock of the instance serving the request, never the database's:
 behind a load balancer, keep the instances' clocks synchronised, or one expires a
 session early that another would still honour.
@@ -237,6 +243,12 @@ Use a temporary file.
   event and then books a place: the loser of the race got that error, an intermittent 500.
   `IMMEDIATE` takes the write lock when the transaction begins, so the other writer waits
   instead. The URL is yours, which is why this library has no knob for it.
+- **SQLite serialises writers at the file, and a pool larger than one makes them queue in
+  its busy handler**, which backs off rather than waiting in line: measured with eight
+  threads writing anonymous sessions, `:pool {:max 4}` gave a p99 of 10.7 ms and a worst
+  write of 1.26 s, `:max 1` a p99 of 6.7 ms and a worst of 68 ms — at the price of reads,
+  which fell from about 23 000 to 11 000 signed-in pages a second. SQLite is the
+  development engine; PostgreSQL has no such tail.
 - **The SQLite driver loads native code**, and a recent JDK prints four `WARNING: A
   restricted method…` lines on every start unless the JVM is told it may:
   `:jvm-opts ["--enable-native-access=ALL-UNNAMED"]` in the alias that runs it.
@@ -267,6 +279,14 @@ threads would be a lifecycle you did not ask for (`SPEC.md` §9).
   HikariCP's counters. `:waiting` above zero for long means the pool is exhausted, not
   that the database is slow; `:total` climbs to `[:pool :max]` on its own after `start`.
   It refuses a stopped pool rather than reporting its zeros.
+- **Metrics.** For more than those four numbers, hand HikariCP your registry after
+  `start`: `(.setMetricsTrackerFactory ^HikariDataSource (:datasource handle) factory)`,
+  or `.setMetricRegistry` with a Dropwizard or Micrometer registry — measured working,
+  every borrow tracked. The pool is named `HikariPool-1`, `-2`… in the order pools start,
+  and its configuration is sealed once started, so its name cannot be changed afterwards
+  (measured: `IllegalStateException`); label the metrics on your side. The few setters
+  HikariCP still takes on a running pool bypass the checks `start` made, so change
+  nothing there that `start` would have refused.
 - **Reclaiming sessions.** Expired session rows are already invisible — the expiry is in
   every read — so reclaiming is about disk, and nothing does it unless you call
   `session/reclaim-expired!`. Call it from a scheduler your host owns, and stop that

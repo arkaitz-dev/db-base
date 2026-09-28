@@ -68,7 +68,8 @@ saying so — a run with nothing to run against is never a pass. Each test works
 schema of its own and drops it. Run it before any release: it is the only thing that
 sees what the everyday suite cannot, and it found §8's column on its first run.
 
-**No demo may ever reach `:test`** — `demo/`, `demo-tasks/`, `demo-ledger/`, `demo-events/`: `structure_test`'s logging-backend scan reads
+**No demo may ever reach `:test`** — `demo/`, `demo-tasks/`, `demo-ledger/`, `demo-events/`,
+and `hosts-test/`, the one support namespace the three last share on their `-test` aliases: `structure_test`'s logging-backend scan reads
 the running JVM's classpath, and the web stack brings logback. Its own docstring says a
 backend arriving through a test extra "reds falsely but visibly, and the fix is to move
 it, never to filter the scan". They are four aliases and two directories, and nothing a
@@ -410,6 +411,13 @@ is any code to break.**
   starts clean and says nothing, until the first deploy that does have a migration fails
   naming a holder from days ago. The failure is loud when it matters and silent until
   then, on purpose; a test pins both halves.
+- **A shipped library migration edited in place.** The session table's migrations —
+  `001-sessions`, `001-sessions-postgresql` — are recorded in `db_base_migrations` by id
+  alone: §7 compares ids and keeps no checksum. Changing the SQL under an existing id is
+  therefore skipped in silence by every database that already applied it, and only a
+  fresh one sees the new table: two shapes of `db_base_sessions` in production, with
+  nothing that says so. A change to a shipped migration is a new id, always; a rename
+  or a removal is already refused loudly, as a recorded id the source has lost.
 - **Integrant's own failure carries the configuration.** When an `init-key` throws,
   `ig/init` does not halt what it built: it throws an `ex-info` whose data holds
   `{:reason ::ig/build-threw-exception :key K :system <the partial system> :value V}`,
