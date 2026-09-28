@@ -591,7 +591,7 @@
               (let [e (try (store/write-session s key (session-of-length 4001)) nil
                            (catch clojure.lang.ExceptionInfo e e))]
                 (is (= ["db-base: a session of 4001 characters is longer than the 4000 the session table holds"
-                        {:length 4001 :data-max 4000}]
+                        {:config-key [:sessions :dialect] :length 4001 :data-max 4000}]
                        (ts/pair e))
                     (str engine ": one character over is refused on the " path " path, by this library,"
                          " naming the numbers and never the session"))))

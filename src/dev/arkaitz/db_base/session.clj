@@ -169,12 +169,15 @@
 
 (defn- refuse-over-long!
   "Refuses a session whose EDN is longer than `data-max` characters, naming both numbers
-  and never the session, which may hold whatever the host put in it."
+  and never the session, which may hold whatever the host put in it. The bound is the
+  portable table's, lifted by naming a dialect at boot, so that is the key this refusal
+  names — SPEC §6's rule that every failure of this library carries the config key that
+  would fix it."
   [^String text data-max]
   (when (and data-max (< (long data-max) (.length text)))
     (throw (ex-info (str "db-base: a session of " (.length text) " characters is longer than the "
                          data-max " the session table holds")
-                    {:length (.length text) :data-max data-max}))))
+                    {:config-key [:sessions :dialect] :length (.length text) :data-max data-max}))))
 
 (defrecord JdbcStore [^DataSource datasource lifetime-ms readers data-max]
   store/SessionStore
