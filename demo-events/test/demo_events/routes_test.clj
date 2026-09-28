@@ -79,7 +79,7 @@
         (let [b        (s/browser)
               _        (s/GET app b "/login")
               response (s/hop app b method (str/replace path #":[a-z]+" "x"))]
-          (is (wt/gate-refusal? response "/login")
+          (is (and (= 303 (:status response)) (wt/gate-refusal? response "/login"))
               (str (name method) " " path ": expected the gate's refusal on the first hop, got "
                    (:status response) " " (select-keys (:headers response) ["Location" "Cache-Control" "Vary"])
                    " — a 403 means CSRF refused it before any gate, a 303 without the refusal's headers"
