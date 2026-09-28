@@ -1091,6 +1091,9 @@
                                         pool-stats "SPEC §6: the pool's load, for a host's metrics"}
     ;; Methods on Integrant's multimethods only, which define no var (SPEC §10).
     dev.arkaitz.db-base.integrant      {}
+    ;; 2026-09-28. A method on resauce's multimethod only, for a native image's
+    ;; `resource:` directories; opt-in by requiring, like the Integrant one.
+    dev.arkaitz.db-base.native         {}
     ;; 2026-09-25. Two thunks and no SQL, so §9's query builder cannot grow from it; a
     ;; second var here is an amendment of SPEC §10 first.
     dev.arkaitz.db-base.collision      {arbitrate! "SPEC §10: a refused write answered by a look, never by SQLSTATE"}
