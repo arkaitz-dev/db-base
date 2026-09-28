@@ -109,6 +109,11 @@ you send it afterwards.
 (session/reclaim-expired! handle)   ; the operator's sweep, and the only one there is
 ```
 
+**The cookie's `:max-age` is seconds; the store's `:lifetime-ms` above it is
+milliseconds.** Deriving one from the other by dividing by 1000, a `:lifetime-ms` under
+1000 gives `Max-Age=0`, which a browser deletes the cookie on at once — while the row
+this library wrote is still there, unreachable until `reclaim-expired!` finds it expired.
+
 `store` reads its table once, for no row, when it is built, so a handle whose boot said
 `:sessions :none` is refused there — naming `[:sessions]` — rather than as the engine's
 refusal on every request that touches a session.
@@ -265,19 +270,39 @@ threads would be a lifecycle you did not ask for (`SPEC.md` §9).
 - **Reclaiming sessions.** Expired session rows are already invisible — the expiry is in
   every read — so reclaiming is about disk, and nothing does it unless you call
   `session/reclaim-expired!`. Call it from a scheduler your host owns, and stop that
-  scheduler before `db/stop`:
+  scheduler before `db/stop`. `session/reclaim-expired!` takes the handle `start`
+  returned and reads the clock itself; a host of auth-base's `jdbc` store has the same
+  shape of row to give back — its sign-in challenges — and reclaims them on the same
+  schedule with `auth-jdbc/reclaim-expired!`, which instead takes a datasource and a
+  `now` the caller supplies:
 
   ```clojure
-  (import '[java.util.concurrent Executors TimeUnit])
+  (require '[clojure.tools.logging :as log])
+  (import '[java.util.concurrent Executors ThreadFactory TimeUnit])
 
-  (def sweeper (Executors/newSingleThreadScheduledExecutor))
-  (.scheduleWithFixedDelay sweeper
-                           #(try (println "reclaimed" (session/reclaim-expired! handle))
-                                 (catch Exception e (println "reclaim failed:" (ex-message e))))
-                           0 1 TimeUnit/HOURS)
-  ;; and on the way down, before db/stop:
+  (defn- daemon-threads
+    "A daemon, so a halt that never ran cannot keep the JVM from exiting."
+    [thread-name]
+    (reify ThreadFactory
+      (newThread [_ r] (doto (Thread. ^Runnable r ^String thread-name) (.setDaemon true)))))
+
+  (defn- sweep! []
+    ;; Caught and logged per table: an uncaught exception cancels a
+    ;; ScheduledExecutorService's future runs silently, and one failing table must not
+    ;; stop the other from being swept.
+    (try (log/info "reclaimed" (session/reclaim-expired! handle) "sessions")
+         (catch Exception e (log/warn e "session reclaim failed; the next one runs as scheduled"))))
+
+  (def sweeper (Executors/newSingleThreadScheduledExecutor (daemon-threads "sweeper")))
+  (.scheduleWithFixedDelay sweeper sweep! 0 1 TimeUnit/HOURS)
+
+  ;; and on the way down, before db/stop: give a running sweep ten seconds, then interrupt
+  ;; it and give it five more — bounded either way, never an indefinite wait.
   (.shutdown sweeper)
-  (.awaitTermination sweeper 10 TimeUnit/SECONDS)
+  (when-not (.awaitTermination sweeper 10 TimeUnit/SECONDS)
+    (.shutdownNow sweeper)
+    (when-not (.awaitTermination sweeper 5 TimeUnit/SECONDS)
+      (log/warn "the sweeper did not stop; the pool closes under it")))
   ```
 
   Hourly is plenty for a table that only ever needs to stop growing; a cron job running a
