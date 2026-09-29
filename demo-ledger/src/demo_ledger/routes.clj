@@ -1,12 +1,11 @@
 (ns demo-ledger.routes
-  "Where the three libraries meet: auth-base's routes, this host's, one layout."
+  "This host's routes under its layout; sign-in, sign-out and /health are the plugins'."
   (:require [clojure.string :as str]
             [demo-ledger.ledger :as ledger]
             [demo-ledger.money :as money]
             [demo-ledger.views :as views]
             [dev.arkaitz.auth-base :as auth]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
-            [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.error :as error]
             [dev.arkaitz.web-base.response :as response]))
@@ -99,21 +98,11 @@
 
 (defn routes [db ceremony]
   [["" {:wb/layouts [views/shell-layout]}
-    (into (auth/routes ceremony {:view        views/login
-                                 :login-path  "/login"
-                                 :logout-path "/logout"
-                                 :rate-limit  {:limit 5 :window-ms (* 15 60 1000)}})
-          [["" {:wb/gate wb/subject-present?}
-            ["/" {:get {:handler (partial home db)}}]
-            ["/groups" {:post {:handler (partial create-group db)}}]
-            ["/groups/:id" {:get {:handler (partial group-page db)}}]
-            ["/groups/:id/expenses" {:post {:handler (partial add-expense db)}}]
-            ["/groups/:id/expenses/:expense/delete" {:post {:handler (partial delete-expense db)}}]
-            ["/groups/:id/invitations" {:post {:handler (partial invite db ceremony)}}]
-            ["/invitations/:id/accept" {:post {:handler (partial accept db)}}]]])]])
-
-(defn sessionless
-  "What web-base answers before the session: a probe must not need one, and with a
-  session in a row it could not get its answer out when the pool was down."
-  [db]
-  {"/health" (response/health #(db/ready? db 2))})
+    ["" {:wb/gate wb/subject-present?}
+        ["/" {:get {:handler (partial home db)}}]
+        ["/groups" {:post {:handler (partial create-group db)}}]
+        ["/groups/:id" {:get {:handler (partial group-page db)}}]
+        ["/groups/:id/expenses" {:post {:handler (partial add-expense db)}}]
+        ["/groups/:id/expenses/:expense/delete" {:post {:handler (partial delete-expense db)}}]
+        ["/groups/:id/invitations" {:post {:handler (partial invite db ceremony)}}]
+        ["/invitations/:id/accept" {:post {:handler (partial accept db)}}]]]])

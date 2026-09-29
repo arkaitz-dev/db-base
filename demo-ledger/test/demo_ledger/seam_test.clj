@@ -81,8 +81,10 @@
     (let [jar (browser)]
       (GET app jar "/login")
       (dotimes [_ 5] (POST app jar "/login" {"identifier" "ada@example.test"}))
-      (is (str/includes? (str (:body (:response @jar))) "A link is on its way")
+      (is (str/includes? (str (:body (:response @jar))) "a link is on its way")
           "control: the fifth was still accepted, so the refusal below is the sixth's")
+      (is (str/includes? (str (:body (:response @jar))) "In this demo it is printed to the server&apos;s console.")
+          "and the standard page carries this host's own sentence, put over auth-base's dictionary")
       (let [refused (POST app jar "/login" {"identifier" "ada@example.test"})
             wait    (some-> (get-in refused [:headers "Retry-After"]) parse-long)]
         (is (= 429 (:status refused)) "the sixth is refused")

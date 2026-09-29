@@ -1,17 +1,11 @@
 (ns demo-tasks.routes
-  "The one file where all three libraries are named together, which is the
-  clearest measure of how much a host actually has to do.
-
-  auth-base's `routes` hands back reitit route data — plain vectors, and it
-  brings no reitit dependency to do it — so the host nests them under its own
-  layout beside its own routes. Neither library knows the other exists; this
-  vector is the whole of the meeting."
+  "This host's own routes, and the two hooks it hands auth-base's plugin so that its
+  record of a device goes when the session does. Signing in and out is the plugin's."
   (:require [demo-tasks.devices :as devices]
             [demo-tasks.tasks :as tasks]
             [demo-tasks.views :as views]
             [dev.arkaitz.auth-base :as auth]
             [dev.arkaitz.auth-base.jdbc :as auth-jdbc]
-            [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base :as wb]
             [dev.arkaitz.web-base.response :as response]
             [ring.middleware.session.store :as session-store]))
@@ -84,24 +78,32 @@
   (tasks/delete-task! db (:wb/subject request) (get-in request [:path-params :id]))
   (response/see-other "/"))
 
-(defn- revoke
-  "Ends every session this subject has, anywhere. auth-base does it by moving a
-  generation on the subject rather than by enumerating sessions — which is why
-  it works over any store, the sealed cookie included.
+(defn on-logout
+  "auth-base's `:on-logout`: this host forgets its record of the device in the same act.
+  Handed the request before the session goes, because it needs `:session/key`, which
+  names the session about to be deleted, and `:wb/subject`.
 
-  The host's own records go in the same act. Leaving them would show somebody a
-  list of places they are signed in when they are signed in nowhere."
-  [db ceremony request]
-  (when-let [subject (:wb/subject request)]
-    (auth/revoke! ceremony subject)
-    (devices/forget-all! db subject))
-  (response/see-other "/login"))
+  **Why it is worth the line.** Without it, logging out deletes the session row and
+  leaves this host's record of it behind, so the next visit lists a device that names
+  nothing."
+  [db]
+  (fn [request]
+    (devices/forget! db (:wb/subject request) (:session/key request))))
+
+(defn on-revoke
+  "auth-base's `:on-revoke`: every session of this subject has ended, anywhere — auth-base
+  moves a generation rather than enumerating sessions, which is why it works over any
+  store — and this host's records of them go in the same act. Leaving them would show
+  somebody a list of places they are signed in when they are signed in nowhere."
+  [db]
+  (fn [_request subject]
+    (devices/forget-all! db subject)))
 
 (defn- owned
   "The routes only a signed-in person reaches, under one gated parent: the gate is
   route data, so every route nested here inherits it, and one added later is private
   without anybody remembering to say so."
-  [db ceremony store]
+  [db store]
   [["" {:wb/gate wb/subject-present?}
     ["/" {:get {:handler (partial home db)}}]
     ["/sessions" {:get {:handler (partial sessions db)}}]
@@ -109,61 +111,15 @@
     ["/tasks" {:post {:handler (partial add db)}}]
     ["/tasks/:id" {:post {:handler (partial rename db)}}]
     ["/tasks/:id/toggle" {:post {:handler (partial toggle db)}}]
-    ["/tasks/:id/delete" {:post {:handler (partial remove-task db)}}]
-    ["/revoke" {:post {:handler (partial revoke db ceremony)}}]]])
-
-(defn- auth-routes
-  "auth-base's own four routes, with its logout wrapped so that this host forgets
-  its record of the device in the same act.
-
-  Taken from `auth/routes` itself and only the logout's handler replaced, so whatever
-  else auth-base puts in its route data — `:wb/log-path` on the redemption, which keeps
-  the token out of the access log — reaches this host too. A copy of the vector did
-  not: when auth-base 0.7.0 added that key, this host's redemption went on logging its
-  token. The wrapper runs BEFORE the logout, because it needs `:session/key` — which
-  names the session about to be deleted — and `:wb/subject`, which the response is
-  about to take away.
-
-  **Why it is worth the extra lines.** Without it, logging out deletes the session row
-  and leaves this host's record of it behind, so the next visit lists a device that
-  names nothing. Harmless to end, confusing to read, and a poor advertisement for the
-  one feature that justifies a server-side session."
-  [db ceremony opts]
-  (mapv (fn [[path data]]
-          (if (= path (:logout-path opts))
-            [path (update-in data [:post :handler]
-                             (fn [logout]
-                               (fn [request]
-                                 (devices/forget! db (:wb/subject request) (:session/key request))
-                                 (logout request))))]
-            [path data]))
-        (auth/routes ceremony opts)))
+    ["/tasks/:id/delete" {:post {:handler (partial remove-task db)}}]]])
 
 (defn routes
-  "auth-base's four routes and this host's eight, under one layout. `/health` is
-  `sessionless`'s, outside the session: a probe wants a status line, not a page."
+  "This host's eight routes, under its layout. Sign-in, sign-out, sign out everywhere and
+  `/health` are the plugins'."
   [db ceremony store]
   [["" {:wb/layouts  [views/shell-layout]
         ;; Route middleware, so reitit runs it inside web-base's session layer: a
         ;; revoked session's row is deleted at its next request instead of lingering
-        ;; until it expires.
+        ;; until it expires. The plugin puts the same on its own routes.
         :middleware [[auth/wrap-revoked ceremony]]}
-    (into (auth-routes db ceremony {:view         views/login
-                                    :login-path   "/login"
-                                    :logout-path  "/logout"
-                                    :after-login  "/"
-                                    :after-logout "/login"
-                                    ;; Keyed by source and never by address: a
-                                    ;; limit counted per address would answer
-                                    ;; differently for one somebody had just
-                                    ;; asked about, and would let anyone lock a
-                                    ;; known user out of their own login by
-                                    ;; spending their allowance.
-                                    :rate-limit {:limit 5 :window-ms (* 15 60 1000)}})
-          (owned db ceremony store))]])
-
-(defn sessionless
-  "What web-base answers before the session: a probe must not need one, and with a
-  session in a row it could not get its answer out when the pool was down."
-  [db]
-  {"/health" (response/health #(db/ready? db 2))})
+    (owned db store)]])

@@ -81,10 +81,13 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.10.1 and auth-base 0.8.1 as releases** (2026-09-29),
-which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
-host signs people in through auth-base's optional `jdbc` store, keeps those three tables
-as migrations copied from its `ddl`, and calls its `check!` at boot.
+Every host consumes **web-base 0.11.0 and auth-base 0.9.0 as releases** (2026-09-29),
+which carry what the hosts found missing — `FRICTION.md` says which entry each closed —
+and installs **both libraries as web-base plugins**: `db-base.web/plugin` for the
+session store and `/health`, `auth-base.web/plugin` for the standard sign-in and
+sign-out, with no login view, logout form or probe of the host's own. A host signs
+people in through auth-base's optional `jdbc` store, keeps those three tables as
+migrations copied from its `ddl`, and calls its `check!` at boot.
 
 `clojure -M:test -e '…'` does **not** evaluate: `:test`'s `:main-opts` hand the arguments
 to the test runner, which reads `-e` as `--exclude` and runs the tests as usual — the form

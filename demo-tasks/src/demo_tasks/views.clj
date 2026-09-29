@@ -6,8 +6,14 @@
   The views never see a database handle and never see the ceremony. They are
   handed what to draw, which is what keeps `routes` the only file where the
   three libraries are named together."
-  (:require [dev.arkaitz.web-base.security :as security]
+  (:require [dev.arkaitz.auth-base.web :as auth-web]
+            [dev.arkaitz.web-base.security :as security]
             [dev.arkaitz.web-base.shell :as shell]))
+
+(def auth-paths
+  "Where auth-base's plugin mounts its routes: handed to it, and to the identity slot so
+  its buttons post there."
+  {:login-path "/login" :logout-path "/logout" :revoke-path "/revoke"})
 
 (defn shell-layout
   "The outermost layout: web-base's shell with this host's slots filled."
@@ -20,46 +26,7 @@
                     "auth-base decides who you are, and db-base opened the database "
                     "and applied the schema before any of it answered a request."])
     :content content
-    :footer  (let [subject (:wb/subject request)]
-               (if subject
-                 [:form {:method "post" :action "/logout" :style "display:inline"}
-                  (security/csrf-field request)
-                  [:button {:type "submit"} "Log out"]
-                  " · "
-                  [:button {:type "submit" :formaction "/revoke"}
-                   "Log out everywhere"]]
-                 [:span "not signed in"]))}))
-
-(defn login
-  "The one view auth-base asks this host for. It is handed the request and one
-  of five states and returns Hiccup, without auth-base knowing that web-base
-  or this layout exist. Opening a link is `:confirm?`: one button, whose POST —
-  with this session's CSRF token — is what signs somebody in."
-  [request {:keys [sent? spent? limited? confirm? action field]}]
-  (if confirm?
-    (list [:h2 "Sign in"]
-          [:form {:method "post" :action action}
-           (security/csrf-field request)
-           [:button {:type "submit"} "Sign in"]])
-  (list
-   [:h2 "Sign in"]
-   (when sent?
-     [:p.ok [:strong "If that address can receive mail, a link is on its way."]
-      " In this demo the link is printed to the server's console."])
-   (when spent?
-     [:p.error [:strong "That link no longer works."] " It is good once, and it expires."])
-   (when limited?
-     [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
-   [:form {:method "post" :action action}
-    (security/csrf-field request)
-    [:label "Email address "
-     [:input {:type "email" :name field :required true :autofocus true
-              :placeholder "ada@example.test"}]]
-    " "
-    [:button {:type "submit"} "Send me a link"]]
-   [:p [:small "Any address works: the first time you follow a link, an account is "
-        "created for it. The answer is the same whether the address is known or not — "
-        "if it were not, this page would be telling strangers who has an account."]])))
+    :footer  (auth-web/identity request auth-paths)}))
 
 (defn- task-item [request {:keys [id body done]}]
   [:li {:class (when (= 1 done) "done")}

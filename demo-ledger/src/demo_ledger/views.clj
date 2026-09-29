@@ -2,8 +2,13 @@
   "Hiccup for web-base to render. The views are handed what to draw and never see a
   database handle or the ceremony."
   (:require [demo-ledger.money :as money]
+            [dev.arkaitz.auth-base.web :as auth-web]
             [dev.arkaitz.web-base.security :as security]
             [dev.arkaitz.web-base.shell :as shell]))
+
+(def auth-paths
+  "Where auth-base's plugin mounts its routes: handed to it, and to the identity slot."
+  {:login-path "/login" :logout-path "/logout"})
 
 (defn shell-layout [{:keys [content request]}]
   (shell/page
@@ -13,31 +18,7 @@
                    [:p "Shared expenses on three libraries: web-base serves it, auth-base "
                     "decides who you are, db-base keeps the books."])
     :content content
-    :footer  (if (:wb/subject request)
-               [:form {:method "post" :action "/logout"}
-                (security/csrf-field request)
-                [:button {:type "submit"} "Log out"]]
-               [:span "not signed in"])}))
-
-(defn login
-  "auth-base's view, in its five states; opening a link is `:confirm?`, one button whose
-  POST signs in."
-  [request {:keys [sent? spent? limited? confirm? action field]}]
-  (if confirm?
-    (list [:h2 "Sign in"]
-          [:form {:method "post" :action action}
-           (security/csrf-field request)
-           [:button {:type "submit"} "Sign in"]])
-  (list
-   [:h2 "Sign in"]
-   (when sent? [:p.ok [:strong "A link is on its way."] " In this demo it is printed to the server's console."])
-   (when spent? [:p.error [:strong "That link no longer works."]])
-   (when limited? [:p.error [:strong "Too many attempts from here."] " Wait a few minutes and try again."])
-   [:form {:method "post" :action action}
-    (security/csrf-field request)
-    [:label "Email address "
-     [:input {:type "email" :name field :required true :autofocus true}]]
-    " " [:button {:type "submit"} "Send me a link"]])))
+    :footer  (auth-web/identity request auth-paths)}))
 
 (defn- post-form [request action & body]
   (into [:form {:method "post" :action action}]

@@ -9,7 +9,7 @@
   itself, since a child's own gate replaces the group's. The behavioural half watches
   the FIRST hop, because a followed redirect hides who answered, and recognises the
   gate by the headers only its refusal carries: a handler that redirects to the login
-  page by itself, as `/revoke` does for a visitor with no subject, sends neither."
+  page by itself, as the revoke path does for a visitor with no subject, sends neither."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [hosts.support :as s]
@@ -54,7 +54,9 @@
 
 (deftest every-route-of-this-host-is-gated-except-the-ones-it-declares-public
   (s/with-system [system path]
-    (let [web  (get system :demo-events/web-config)
+    ;; Expanded, as web-base builds the handler from it: the plugins' routes and probe
+    ;; are this host's endpoints too.
+    (let [web  (wb/expand (get system :demo-events/web-config))
           app  (get system :dev.arkaitz.web-base/handler)
           tree (:routes web)]
       (is (= public (where nil? (endpoints tree)))

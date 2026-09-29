@@ -9,7 +9,7 @@
   itself, since a child's own gate replaces the group's. The behavioural half watches
   the FIRST hop, because a followed redirect hides who answered, and recognises the
   gate by the headers only its refusal carries: a handler that redirects to the login
-  page by itself, as `/revoke` does for a visitor with no subject, sends neither."
+  page by itself, as the revoke path does for a visitor with no subject, sends neither."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [clojure.tools.logging.test :as lt]
@@ -21,11 +21,13 @@
             [reitit.ring :as ring]))
 
 (def ^:private public
-  {"/login" [:get :post] "/login/redeem/:token" [:get :post] "/logout" [:post]})
+  ;; `/revoke` is auth-base's plugin's since 0.9.0, ungated like the logout: with no
+  ;; subject it revokes nothing and only ends the session, behind the CSRF check.
+  {"/login" [:get :post] "/login/redeem/:token" [:get :post] "/logout" [:post] "/revoke" [:post]})
 
 (def ^:private gated
   {"/" [:get] "/sessions" [:get] "/sessions/:id/end" [:post] "/tasks" [:post] "/tasks/:id" [:post]
-   "/tasks/:id/toggle" [:post] "/tasks/:id/delete" [:post] "/revoke" [:post]})
+   "/tasks/:id/toggle" [:post] "/tasks/:id/delete" [:post]})
 
 (defn- endpoints
   "`{path {method gate}}` for every method the host declared on a route — never the
@@ -55,7 +57,9 @@
 
 (deftest every-route-of-this-host-is-gated-except-the-ones-it-declares-public
   (s/with-system [system path]
-    (let [web  (get system :demo-tasks/web-config)
+    ;; Expanded, as web-base builds the handler from it: the plugins' routes and probe
+    ;; are this host's endpoints too.
+    (let [web  (wb/expand (get system :demo-tasks/web-config))
           app  (get system :dev.arkaitz.web-base/handler)
           tree (:routes web)]
       (is (= public (where nil? (endpoints tree)))

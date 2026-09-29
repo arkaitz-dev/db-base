@@ -14,6 +14,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [dev.arkaitz.auth-base.jdbc :as aj]
+            [dev.arkaitz.auth-base.testing :as abt]
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.testing :as dbt]
             [dev.arkaitz.web-base.integrant :as wbi]
@@ -172,30 +173,22 @@
   (aj/latest-challenge-token (datasource path) identifier))
 
 (defn open-link!
-  "What a person does with a link: open it — auth-base's confirmation page, which
-  spends nothing — and press its one button, whose POST carries that page's CSRF
-  token. Answers the POST's response, its redirect followed."
+  "What a person does with a link, as auth-base's `testing/open-link` walks it: the
+  confirmation page, which spends nothing, and its one button. Answers the POST's
+  response, its redirect followed."
   [app jar token]
-  (let [link (str "/login/redeem/" token)]
-    (GET app jar link)
-    (POST app jar link nil)))
+  (:response (reset! jar (abt/open-link (or @jar (wt/browser app)) token))))
 
 (defn sign-in!
-  "The whole ceremony as a browser walks it: ask for a link, take the token the
-  host stored, open it, press the button, and land on the page the redemption's
-  redirect names. `identifier` is read back as given, so pass it in its normal form;
-  a walk that finds no challenge throws, naming it — continuing would sign nobody in
-  and leave every later assertion about somebody else."
+  "The whole ceremony as auth-base's `testing/sign-in` walks it, reading the token this
+  host stored. Answers the token. `identifier` is read back as given, so pass it in its
+  normal form; a walk that finds no challenge, or whose link signs nobody in, throws
+  naming it — continuing would leave every later assertion about somebody else."
   [app path jar identifier]
-  (GET app jar "/login")
-  (POST app jar "/login" {"identifier" identifier})
-  (let [token (or (challenge-token path identifier)
-                  (throw (ex-info (str "no challenge was stored for " (pr-str identifier)
-                                       " — the login was refused or limited, or the identifier is not"
-                                       " in the form the ceremony stores")
-                                  {:identifier identifier})))]
-    (open-link! app jar token)
-    token))
+  (let [token (volatile! nil)]
+    (reset! jar (abt/sign-in (or @jar (wt/browser app)) identifier
+                             #(vreset! token (challenge-token path %))))
+    @token))
 
 (defn hop
   "One request with this browser's cookies — and, on a POST, the CSRF token of the
