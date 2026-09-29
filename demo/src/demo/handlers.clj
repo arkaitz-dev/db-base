@@ -4,7 +4,6 @@
   (:require [clojure.string :as str]
             [demo.notes :as notes]
             [demo.views :as views]
-            [dev.arkaitz.db-base :as db]
             [dev.arkaitz.web-base.response :as response]
             [dev.arkaitz.web-base.session :as session]))
 
@@ -41,11 +40,3 @@
     (when (and (string? body) (<= (count body) 200))
       (notes/add-note! db body)))
   (response/see-other "/"))
-
-(defn health
-  "200 while the database answers within two seconds, 503 when it does not. `ready?`
-  never throws for a database that is merely unreachable, so this needs no try."
-  [db _request]
-  (if (db/ready? db 2)
-    {:status 200 :headers {"content-type" "text/plain"} :body "ok"}
-    {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))

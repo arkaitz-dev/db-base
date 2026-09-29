@@ -25,7 +25,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [demo.handlers :as handlers]
+            [demo.routes :as routes]
             [demo.system]
             [dev.arkaitz.db-base.session :as session]
             [dev.arkaitz.db-base.testing :as dbt]
@@ -510,16 +510,16 @@
           (is (some? cookie) "precondition: the home page gave this visitor a session")
           (ig/halt! system)
           (let [probe (handler (carrying (mock/request :get "/health") cookie))]
-            (is (= [503 "the database is not answering"] [(:status probe) (:body probe)])
+            (is (= [503 "unavailable"] [(:status probe) (:body probe)])
                 (str "a probe carrying a session cookie gets the 503 with the pool closed —"
                      " it never touched the session layer, whose read would have thrown"))))
-        (is (= [503 "the database is not answering"]
-               ((juxt :status :body) (handlers/health db (mock/request :get "/health"))))
+        (is (= [503 "unavailable"]
+               ((juxt :status :body) ((get (routes/sessionless db) "/health") (mock/request :get "/health"))))
             (str "and the ROUTE answers from `ready?` with the pool closed — asked of the"
                  " handler function directly, so a health that never consulted `ready?`"
                  " cannot pass on a constant. `ready?` answers false for a borrow that fails"
                  " rather than throwing, which is what lets this route exist at all"))
-        (is (= [503 "the database is not answering"] (health handler))
+        (is (= [503 "unavailable"] (health handler))
             (str "and through the whole stack too: the probe gets the 503, where before it"
                  " got a SQLException from the session layer and an operator saw a pool"
                  " error instead of the sentence")))

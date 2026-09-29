@@ -3,7 +3,9 @@
   can name and end, and a health route whose answer is `ready?`'s. The database handle is closed over rather than reached for,
   because SPEC §9 says a library holds no ambient state and a host needs none either."
   (:require [demo.handlers :as handlers]
-            [demo.views :as views]))
+            [demo.views :as views]
+            [dev.arkaitz.db-base :as db]
+            [dev.arkaitz.web-base.response :as response]))
 
 (defn routes [db]
   [["" {:wb/layouts [views/shell-layout]}
@@ -19,4 +21,4 @@
   "What web-base answers before the session: a probe must not need one, and with a
   session in a row it could not get its answer out when the pool was down."
   [db]
-  {"/health" (partial handlers/health db)})
+  {"/health" (response/health #(db/ready? db 2))})
