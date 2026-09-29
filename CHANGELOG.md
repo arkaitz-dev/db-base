@@ -7,7 +7,7 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-09-29
 
 - `dev.arkaitz.db-base.web/plugin`: this library as a web-base 0.11.0 plugin — §8's
   session store as `:session` and a readiness probe at `/health` as `:sessionless`, one

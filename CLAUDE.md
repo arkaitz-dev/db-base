@@ -25,7 +25,8 @@ from an isolated Maven repo), and the repository is public; **0.2.0 on 2026-09-2
 the store refusing a boot without its table and `testing/sessions`/`session`; **0.2.1 and
 0.2.2 on 2026-09-28** — the over-long refusal's `:config-key`, and
 `dev.arkaitz.db-base.native` for GraalVM images (0.2.2 fixes 0.2.1's doubled module
-prefix on GraalVM CE 25.0.4). Every public var of `src`
+prefix on GraalVM CE 25.0.4); **0.3.0 on 2026-09-29**, `dev.arkaitz.db-base.web`, this
+library as a web-base plugin (SPEC §10, rule 3 amended by the user). Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
