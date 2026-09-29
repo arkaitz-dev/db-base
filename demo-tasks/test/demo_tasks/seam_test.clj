@@ -62,7 +62,13 @@
 
 (deftest the-address-is-canonicalised-before-anything-is-keyed-on-it
   (with-host [app path]
-    (sign-in! app path (browser) "  Ada@Example.test ")
+    (let [typed (browser)]
+      (GET app typed "/login")
+      (POST app typed "/login" {"identifier" "  Ada@Example.test "})
+      (let [token (challenge-token path "ada@example.test")]
+        (is (string? token) "witness: the address as typed issued a challenge, stored under its normal form")
+        (open-link! app typed token)
+        (is (= "/" (:path @typed)) "and following it signs that person in")))
     (sign-in! app path (browser) "ada@example.test")
     (is (= [["ada@example.test"]] (support/rows path "SELECT identifier FROM account"))
           "one account, under the canonical spelling")

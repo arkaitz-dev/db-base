@@ -182,13 +182,19 @@
 
 (defn sign-in!
   "The whole ceremony as a browser walks it: ask for a link, take the token the
-  host stored, open it, press the button, and land on the page that follows."
+  host stored, open it, press the button, and land on the page the redemption's
+  redirect names. `identifier` is read back as given, so pass it in its normal form;
+  a walk that finds no challenge throws, naming it — continuing would sign nobody in
+  and leave every later assertion about somebody else."
   [app path jar identifier]
   (GET app jar "/login")
   (POST app jar "/login" {"identifier" identifier})
-  (let [token (challenge-token path identifier)]
+  (let [token (or (challenge-token path identifier)
+                  (throw (ex-info (str "no challenge was stored for " (pr-str identifier)
+                                       " — the login was refused or limited, or the identifier is not"
+                                       " in the form the ceremony stores")
+                                  {:identifier identifier})))]
     (open-link! app jar token)
-    (GET app jar "/")
     token))
 
 (defn hop
