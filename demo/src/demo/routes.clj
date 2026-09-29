@@ -1,11 +1,10 @@
 (ns demo.routes
-  "What this host serves: a page of notes, the form that adds one, a session a visitor
-  can name and end, and a health route whose answer is `ready?`'s. The database handle is closed over rather than reached for,
-  because SPEC §9 says a library holds no ambient state and a host needs none either."
+  "What this host serves: a page of notes, the form that adds one, and a session a
+  visitor can name and end; `/health` is db-base's plugin's. The database handle is
+  closed over rather than reached for, because SPEC §9 says a library holds no ambient
+  state and a host needs none either."
   (:require [demo.handlers :as handlers]
-            [demo.views :as views]
-            [dev.arkaitz.db-base :as db]
-            [dev.arkaitz.web-base.response :as response]))
+            [demo.views :as views]))
 
 (defn routes [db]
   [["" {:wb/layouts [views/shell-layout]}
@@ -16,9 +15,3 @@
     ;; with a cookie too, so that would ask db-base for nothing.
     ["/session"     {:post {:handler (partial handlers/sign-in db)}}]
     ["/session/end" {:post {:handler (partial handlers/end-session db)}}]]])
-
-(defn sessionless
-  "What web-base answers before the session: a probe must not need one, and with a
-  session in a row it could not get its answer out when the pool was down."
-  [db]
-  {"/health" (response/health #(db/ready? db 2))})

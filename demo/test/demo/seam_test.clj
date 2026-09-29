@@ -25,7 +25,6 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
-            [demo.routes :as routes]
             [demo.system]
             [dev.arkaitz.db-base.session :as session]
             [dev.arkaitz.db-base.testing :as dbt]
@@ -268,9 +267,10 @@
             ;; Only the store is replaced. The host's own cookie attributes are carried
             ;; over, so "the same host, the same handler, only the store changed" is a
             ;; description of what this does and not a hope about it.
+            ;; The host's :session wins over the plugin's, which is web-base's rule.
             over-a-cookie (wb/handler
                            (assoc built :session {:key "AAECAwQFBgcICQoLDA0ODw=="
-                                                  :cookie-attrs (get-in built [:session :cookie-attrs])}))]
+                                                  :cookie-attrs (get-in (wb/expand built) [:session :cookie-attrs])}))]
         (try
           (let [form      (over-a-cookie (mock/request :get "/"))
                 named     (over-a-cookie (-> (mock/request :post "/session"
@@ -499,7 +499,10 @@
     (try
       (let [system  (boot path)
             db      (get system :dev.arkaitz.db-base/database)
-            handler (app system)]
+            handler (app system)
+            ;; Taken while the pool is open: building the plugin reads the session table.
+            route   (get-in (wb/expand (ig/init-key :demo/web-config {:db db :session-lifetime-ms 60000 :secure? false}))
+                            [:sessionless "/health"])]
         (is (= [200 "ok"] (health handler))
             "while the pool is open the whole request works, end to end")
         ;; A probe that carries a session cookie — a browser's, or a monitor that kept
@@ -514,7 +517,7 @@
                 (str "a probe carrying a session cookie gets the 503 with the pool closed —"
                      " it never touched the session layer, whose read would have thrown"))))
         (is (= [503 "unavailable"]
-               ((juxt :status :body) ((get (routes/sessionless db) "/health") (mock/request :get "/health"))))
+               ((juxt :status :body) (route (mock/request :get "/health"))))
             (str "and the ROUTE answers from `ready?` with the pool closed — asked of the"
                  " handler function directly, so a health that never consulted `ready?`"
                  " cannot pass on a constant. `ready?` answers false for a borrow that fails"
