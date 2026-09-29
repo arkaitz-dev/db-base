@@ -80,7 +80,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.10.0 and auth-base 0.8.0 as releases** (2026-09-29),
+Every host consumes **web-base 0.10.1 and auth-base 0.8.1 as releases** (2026-09-29),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
