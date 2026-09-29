@@ -77,7 +77,7 @@
       (is (= [200 "/"] (landed app there "/"))
           "precondition: the second browser is signed in")
       (POST app here "/revoke" {})
-      (is (= [200 "/login"] (landed app there "/"))
+      (is (= [200 "/login?next=%2F"] (landed app there "/"))
           (str "and revoking ends it at its next request, with the session sealed in its own"
                " browser and no server anywhere holding a copy"))
       (is (= [[1]] (support/rows path "SELECT generation FROM account_generation"))

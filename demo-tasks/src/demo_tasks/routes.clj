@@ -97,15 +97,6 @@
     (devices/forget-all! db subject))
   (response/see-other "/login"))
 
-(defn- health
-  "200 while the database answers within two seconds, 503 when it does not.
-  `ready?` never throws for a database that is merely unreachable, so this
-  needs no try."
-  [db _request]
-  (if (db/ready? db 2)
-    {:status 200 :headers {"content-type" "text/plain"} :body "ok"}
-    {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))
-
 (defn- owned
   "The routes only a signed-in person reaches, under one gated parent: the gate is
   route data, so every route nested here inherits it, and one added later is private
@@ -175,4 +166,4 @@
   "What web-base answers before the session: a probe must not need one, and with a
   session in a row it could not get its answer out when the pool was down."
   [db]
-  {"/health" (partial health db)})
+  {"/health" (response/health #(db/ready? db 2))})

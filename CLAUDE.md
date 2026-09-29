@@ -80,7 +80,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.9.0 and auth-base 0.7.0 as releases** (2026-09-29),
+Every host consumes **web-base 0.10.0 and auth-base 0.8.0 as releases** (2026-09-29),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
 host signs people in through auth-base's optional `jdbc` store, keeps those three tables
 as migrations copied from its `ddl`, and calls its `check!` at boot.
@@ -211,12 +211,11 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       needs a release. Low severity: it takes a crafted address and fails loud.
 - [ ] **Two auth-base threads this host opened and did not close**, both needing to be
       raised there rather than fixed from here:
-      - **A magic link fetched by a corporate link scanner is consumed before the human
-        clicks it.** Redemption is a `GET` (auth-base `handlers.clj`), Outlook Safe Links
-        and similar gateways fetch emailed URLs, and single use does the rest: the person
-        gets "that link no longer works" for a link they never opened. Found only because
-        this is the first magic-link consumer. It may want a POST behind a confirmation
-        page, which is auth-base's design decision and not this repository's.
+      - ~~**A magic link fetched by a corporate link scanner is consumed before the human
+        clicks it.**~~ — **closed by auth-base 0.8.0 (`950d3ed`, 2026-09-29)**: opening a
+        link renders a confirmation page whose POST, behind the host's CSRF, redeems; no
+        GET spends a link or signs anyone in. The hosts render the fifth view state and
+        `hosts.support/open-link!` walks it as a browser does.
       - ~~**The subject a host returns from `:on-unknown` must be `=` to what
         `subject-for` answers afterwards**~~ — **enforced since auth-base 0.4.0
         (`5120db8`)**: `redeem!` asks the store once more at registration and refuses a

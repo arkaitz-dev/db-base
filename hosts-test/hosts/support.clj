@@ -171,14 +171,23 @@
   [path identifier]
   (aj/latest-challenge-token (datasource path) identifier))
 
+(defn open-link!
+  "What a person does with a link: open it — auth-base's confirmation page, which
+  spends nothing — and press its one button, whose POST carries that page's CSRF
+  token. Answers the POST's response, its redirect followed."
+  [app jar token]
+  (let [link (str "/login/redeem/" token)]
+    (GET app jar link)
+    (POST app jar link nil)))
+
 (defn sign-in!
   "The whole ceremony as a browser walks it: ask for a link, take the token the
-  host stored, follow it, and land on the page that follows."
+  host stored, open it, press the button, and land on the page that follows."
   [app path jar identifier]
   (GET app jar "/login")
   (POST app jar "/login" {"identifier" identifier})
   (let [token (challenge-token path identifier)]
-    (GET app jar (str "/login/redeem/" token))
+    (open-link! app jar token)
     (GET app jar "/")
     token))
 
@@ -189,6 +198,31 @@
   the response set."
   [app jar method path]
   (:response (reset! jar (wt/visit (or @jar (wt/browser app)) method path nil {:follow? false}))))
+
+(defn reclaimed-at-boot
+  "Over a database of its own, migrated by a first boot: plants one expired and one live
+  row in the session table and in the challenge table, through the test's own
+  connection, then initialises the host's `…/reclaimed` key from its `config.edn` as a
+  boot does. Answers `[what the key answered, the ids and tokens left]`, or throws when
+  `config.edn` names no such key — a host that stopped reclaiming."
+  []
+  (let [path (temp-db-path)
+        key  (or (first (filter #(= "reclaimed" (name %)) (keys host-config-edn)))
+                 (throw (ex-info "the host's config.edn names no …/reclaimed key" {})))
+        now  (System/currentTimeMillis)]
+    (try
+      (db/stop (db/start (config path)))
+      (jdbc/execute! (datasource path) ["INSERT INTO db_base_sessions (id, data, expires_at) VALUES (?, ?, ?), (?, ?, ?)"
+                                        "expired" "{}" (- now 60000) "live" "{}" (+ now 3600000)])
+      (jdbc/execute! (datasource path) ["INSERT INTO login_challenge (token, identifier, expires_at) VALUES (?, ?, ?), (?, ?, ?)"
+                                        "expired" "a@x.test" (- now 60000) "live" "b@x.test" (+ now 3600000)])
+      (let [system (ig/init (host-config path) [key])]
+        (try
+          [(get system key)
+           {:sessions   (set (map first (rows path "SELECT id FROM db_base_sessions")))
+            :challenges (set (map first (rows path "SELECT token FROM login_challenge")))}]
+          (finally (ig/halt! system))))
+      (finally (delete-db! path)))))
 
 (defn with-system*
   "The whole system up over a temporary database, handed over whole — for a test

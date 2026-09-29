@@ -51,4 +51,7 @@
 
  ;; One fact with two readers: the server listens on it and the sign-in link is
  ;; built from it (auth-base README, "One port, two readers").
+ ;; Expired sessions and challenges, given back once at boot (system.clj says why).
+ :demo-tasks/reclaimed {:db #ig/ref :dev.arkaitz.db-base/database}
+
  :demo-tasks/port 3000}

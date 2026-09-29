@@ -20,7 +20,7 @@
             [reitit.ring :as ring]))
 
 (def ^:private public
-  {"/login" [:get :post] "/login/redeem/:token" [:get] "/logout" [:post]})
+  {"/login" [:get :post] "/login/redeem/:token" [:get :post] "/logout" [:post]})
 
 (def ^:private gated
   {"/" [:get] "/groups" [:post] "/groups/:id" [:get] "/groups/:id/expenses" [:post]
@@ -85,3 +85,8 @@
                    (:status response) " " (select-keys (:headers response) ["Location" "Cache-Control" "Vary"])
                    " — a 403 means CSRF refused it before any gate, a 303 without the refusal's headers"
                    " that the handler answered, a 500 that something threw")))))))
+
+(deftest expired-sessions-and-challenges-are-given-back-once-at-boot--live-ones-stay
+  (let [[answered left] (s/reclaimed-at-boot)]
+    (is (= {:sessions 1 :challenges 1} answered) "the boot reclaimed one expired row of each table, and said so")
+    (is (= {:sessions #{"live"} :challenges #{"live"}} left) "and only those: the live rows stay")))

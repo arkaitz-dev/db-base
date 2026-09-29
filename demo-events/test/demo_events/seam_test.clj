@@ -64,7 +64,7 @@
             (is (= 404 (:status (GET app ada nowhere))))
             (GET app ada "/")
             (is (= 404 (:status (POST app ada (str nowhere "/join") {}))))
-            (is (= [200 "/login"] (landed app (browser) page)) "control: nobody signed in meets the gate first")))
+            (is (= [200 (str "/login?next=%2Fevents%2F" ev)] (landed app (browser) page)) "control: nobody signed in meets the gate first")))
         (testing "only the owner's delete removes the event, with its answers"
           (GET app bob page)
           (POST app bob (str page "/delete") {})

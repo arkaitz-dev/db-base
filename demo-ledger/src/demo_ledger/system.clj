@@ -27,3 +27,10 @@
    :login-path "/login"
    :session    {:store        (session/store db {:lifetime-ms session-lifetime-ms :readers {}})
                 :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}}})
+
+;; Expired sessions and sign-in challenges are rows nothing else removes: every read
+;; already ignores them, so this is about disk. A demo runs no scheduler, so it gives
+;; them back once, as it boots — the host template sweeps them on a schedule instead.
+(defmethod ig/init-key :demo-ledger/reclaimed [_ {:keys [db]}]
+  {:sessions   (session/reclaim-expired! db)
+   :challenges (auth-jdbc/reclaim-expired! (:datasource db) (System/currentTimeMillis))})

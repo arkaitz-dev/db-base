@@ -16,7 +16,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [hosts.support :as support
-             :refer [GET POST browser challenge-token hop landed session-key-of sign-in! with-host]]
+             :refer [GET POST browser challenge-token hop landed open-link! session-key-of sign-in! with-host]]
             [demo-tasks.system]
             [integrant.core :as ig]
             [next.jdbc :as jdbc]
@@ -35,13 +35,13 @@
       (is (= [[1]] (support/rows path "SELECT COUNT(*) FROM login_challenge"))
           "control: a challenge WAS stored, so the zero above is not a request that failed")
       (let [token (challenge-token path "ada@example.test")]
-        (is (= [200 "/"] (landed app jar (str "/login/redeem/" token)))
-            "following the link signs the person in")
+        (is (= 200 (:status (open-link! app jar token))) "witness: the link was opened and its button pressed")
+        (is (= "/" (:path @jar)) "following the link signs the person in")
         (is (= [["ada@example.test"]] (support/rows path "SELECT identifier FROM account"))
             "and THAT is where the account came into being — at redemption, once the token vouched")
         (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM login_challenge"))
             "and the challenge is spent")
-        (is (= [200 "/login?ab=spent"] (landed app (browser) (str "/login/redeem/" token)))
+        (is (= [200 "/login?ab=spent"] (let [fresh (browser)] [(:status (open-link! app fresh token)) (:path @fresh)]))
             "so the same link in a fresh browser is refused")))))
 
 (deftest a-second-sign-in-finds-the-same-account-and-the-same-tasks
@@ -103,11 +103,11 @@
         (POST app here "/revoke" {})
         (is (some? (support/session path theirs))
             "precondition: revoking moved a generation and deleted no row — the other session's is still there")
-        (is (= [200 "/login"] (landed app there "/"))
+        (is (= [200 "/login?next=%2F"] (landed app there "/"))
             "the other browser is anonymous at its very next request")
         (is (nil? (support/session path theirs))
             "and that request threw its dead session away, rather than leaving the row until it expires"))
-      (is (= [200 "/login"] (landed app here "/"))
+      (is (= [200 "/login?next=%2F"] (landed app here "/"))
           "and so is the one that asked")
       (is (= [[1]] (support/rows path "SELECT generation FROM account_generation"))
           "because a generation moved on the subject, which is all revocation is"))))
@@ -125,7 +125,7 @@
             "precondition: the host has seen this person arrive on two sessions")
         (GET app here "/sessions")
         (POST app here (str "/sessions/" other "/end") {})
-        (is (= [200 "/login"] (landed app there "/"))
+        (is (= [200 "/login?next=%2F"] (landed app there "/"))
             "the session that was ended is anonymous at its next request")
         (is (= [200 "/"] (landed app here "/"))
             "and the one that ended it is still signed in — which is the whole feature")
@@ -197,7 +197,9 @@
     (let [jar (browser)]
       (GET app jar "/login")
       (POST app jar "/login" {"identifier" "ada@example.test"})
-      (hop app jar :get (str "/login/redeem/" (challenge-token path "ada@example.test")))
+      (let [link (str "/login/redeem/" (challenge-token path "ada@example.test"))]
+        (hop app jar :get link)
+        (hop app jar :post link))
       (is (= [[0]] (support/rows path "SELECT COUNT(*) FROM device"))
           (str "nothing yet: at the redemption request `:session/key` still names the session"
                " being replaced, because Ring mints the new one inside write-session and hands"

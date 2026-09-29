@@ -48,7 +48,7 @@
                    (posted app bob (str "/groups/" g "/expenses") {"description" "x" "amount" "1.00"})))
             (is (= 1 (support/one path "SELECT COUNT(*) FROM expense")) "and nothing was written")))
         (testing "control: nobody signed in is sent to the login, which is the gate and not membership"
-          (is (= [200 "/login"] (landed app (browser) (str "/groups/" g)))))
+          (is (= [200 (str "/login?next=%2Fgroups%2F" g)] (landed app (browser) (str "/groups/" g)))))
         (testing "an invitation typed with capitals and spaces reaches the account it names, and only it"
           (GET app ada (str "/groups/" g))
           (is (= [200 (str "/groups/" g)] (posted app ada (str "/groups/" g "/invitations")

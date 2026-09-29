@@ -21,7 +21,7 @@
             [reitit.ring :as ring]))
 
 (def ^:private public
-  {"/login" [:get :post] "/login/redeem/:token" [:get] "/logout" [:post]})
+  {"/login" [:get :post] "/login/redeem/:token" [:get :post] "/logout" [:post]})
 
 (def ^:private gated
   {"/" [:get] "/sessions" [:get] "/sessions/:id/end" [:post] "/tasks" [:post] "/tasks/:id" [:post]
@@ -96,7 +96,13 @@
                         (filter #(= 'dev.arkaitz.web-base.log (ns-name (:logger-ns %))))
                         (mapv :message))]
         (is (string? token) "witness: a link was issued and followed")
-        (is (some #(str/starts-with? % "GET /login/redeem/:token 303") access)
-            (str "the redemption is logged by its template: " access))
+        (is (and (some #(str/starts-with? % "GET /login/redeem/:token 200") access)
+                 (some #(str/starts-with? % "POST /login/redeem/:token 303") access))
+            (str "the link opened and pressed is logged by its template, both times: " access))
         (is (not-any? #(str/includes? (str %) token) (map (juxt :message :throwable) (lt/the-log)))
             "and the token reaches no line")))))
+
+(deftest expired-sessions-and-challenges-are-given-back-once-at-boot--live-ones-stay
+  (let [[answered left] (s/reclaimed-at-boot)]
+    (is (= {:sessions 1 :challenges 1} answered) "the boot reclaimed one expired row of each table, and said so")
+    (is (= {:sessions #{"live"} :challenges #{"live"}} left) "and only those: the live rows stay")))

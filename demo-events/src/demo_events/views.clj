@@ -17,7 +17,15 @@
                 [:button {:type "submit"} "Log out"]]
                [:span "not signed in"])}))
 
-(defn login [request {:keys [sent? spent? limited? action field]}]
+(defn login
+  "auth-base's view, in its five states; opening a link is `:confirm?`, one button whose
+  POST signs in."
+  [request {:keys [sent? spent? limited? confirm? action field]}]
+  (if confirm?
+    (list [:h2 "Sign in"]
+          [:form {:method "post" :action action}
+           (security/csrf-field request)
+           [:button {:type "submit"} "Sign in"]])
   (list
    [:h2 "Sign in"]
    (when sent? [:p.ok [:strong "A link is on its way."] " In this demo it is printed to the server's console."])
@@ -27,7 +35,7 @@
     (security/csrf-field request)
     [:label "Email address "
      [:input {:type "email" :name field :required true :autofocus true}]]
-    " " [:button {:type "submit"} "Send me a link"]]))
+    " " [:button {:type "submit"} "Send me a link"]])))
 
 (defn- post-form [request action & body]
   (into [:form {:method "post" :action action :style "display:inline"}]

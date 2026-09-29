@@ -32,9 +32,15 @@
 
 (defn login
   "The one view auth-base asks this host for. It is handed the request and one
-  of four states and returns Hiccup, without auth-base knowing that web-base
-  or this layout exist."
-  [request {:keys [sent? spent? limited? action field]}]
+  of five states and returns Hiccup, without auth-base knowing that web-base
+  or this layout exist. Opening a link is `:confirm?`: one button, whose POST —
+  with this session's CSRF token — is what signs somebody in."
+  [request {:keys [sent? spent? limited? confirm? action field]}]
+  (if confirm?
+    (list [:h2 "Sign in"]
+          [:form {:method "post" :action action}
+           (security/csrf-field request)
+           [:button {:type "submit"} "Sign in"]])
   (list
    [:h2 "Sign in"]
    (when sent?
@@ -53,7 +59,7 @@
     [:button {:type "submit"} "Send me a link"]]
    [:p [:small "Any address works: the first time you follow a link, an account is "
         "created for it. The answer is the same whether the address is known or not — "
-        "if it were not, this page would be telling strangers who has an account."]]))
+        "if it were not, this page would be telling strangers who has an account."]])))
 
 (defn- task-item [request {:keys [id body done]}]
   [:li {:class (when (= 1 done) "done")}

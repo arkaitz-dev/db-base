@@ -68,11 +68,6 @@
   (events/delete-event! db (subject request) (event-id request))
   (response/see-other "/"))
 
-(defn- health [db _]
-  (if (db/ready? db 2)
-    {:status 200 :headers {"content-type" "text/plain"} :body "ok"}
-    {:status 503 :headers {"content-type" "text/plain"} :body "the database is not answering"}))
-
 (defn routes [db ceremony]
   [["" {:wb/layouts [views/shell-layout]}
     (into (auth/routes ceremony {:view        views/login
@@ -91,4 +86,4 @@
   "What web-base answers before the session: a probe must not need one, and with a
   session in a row it could not get its answer out when the pool was down."
   [db]
-  {"/health" (partial health db)})
+  {"/health" (response/health #(db/ready? db 2))})
