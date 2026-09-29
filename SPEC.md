@@ -731,6 +731,18 @@ implementations of published third-party ports whose tables are its own. Since
   counters and registers nothing: JMX stays the host's. A stopped pool is refused rather
   than reported, because its zeros read as idle.
 
+- **`dev.arkaitz.db-base.web/plugin`** (amended 2026-09-29, by the user's decision that
+  web-base is the root and auth-base and this library its plugins: "el que es
+  independiente de verdad es web-base… los demás son lo más parecido a un plugin que
+  puedas hacer") — the value web-base 0.11.0's `:plugins` takes: §8's store as `:session`
+  and a readiness probe over `ready?` as `:sessionless`, both keys web-base already took
+  from a host. Optional as §8's store is: web-base and ring are the host's, never
+  declared, and only this namespace may name web-base — a scan says so, and the
+  consumer-classpath JVM of `structure_test` proves the rest loads without it. The pool,
+  the migrations and the store serve workers and command-line tools that have no web
+  layer, which is why the plugin is a namespace and not the library. Never auth-base:
+  rule 3 of CLAUDE.md stands for every sibling but the root.
+
 **Out**: everything in §9, the engine, the schema, the SQL, and the driver. **A function
 here that accepts a statement from the host is §9's first entry, whatever it is
 called** — which is the line `arbitrate!` was shaped to stay behind, and the reason

@@ -32,6 +32,7 @@ So a host declares, besides this library:
 |---|---|
 | the JDBC driver (`org.postgresql/postgresql`, `org.xerial/sqlite-jdbc`, …) | always |
 | `ring/ring-core` | with the session store — web-base and auth-base already bring it |
+| `dev.arkaitz/web-base` | with `dev.arkaitz.db-base.web`, the plugin |
 | `com.github.seancorfield/next.jdbc` | when the host queries, and for auth-base's `jdbc` store |
 | a logging backend (`ch.qos.logback/logback-classic`, …) | or HikariCP and the host log nowhere — and SLF4J says so on stderr; `org.slf4j/slf4j-nop` is the backend that silences it |
 | a test runner and `ring/ring-mock` | in the host's test alias |
@@ -88,6 +89,26 @@ the tables after the first never exist, and the next boot has nothing left to ap
 Every failure is an `ex-info` whose data carries `:config-key` as a vector path, plus
 `:migration-id` when one migration is to blame. The JDBC URL and the password are never
 echoed, in the message or in the data.
+
+## In a web-base host: one line
+
+```clojure
+(require '[dev.arkaitz.db-base.web :as db-web])
+
+(wb/handler {:plugins [(db-web/plugin db {:session {:lifetime-ms (* 14 24 3600 1000)
+                                                    :cookie-attrs {:max-age (* 14 24 3600)}}})]
+             :routes  my-routes})
+```
+
+Since 0.3.0, `dev.arkaitz.db-base.web/plugin` is the value web-base 0.11.0's `:plugins`
+takes: the session store below as `:session` — `:lifetime-ms` and `:readers` for the
+store, web-base's `:cookie-attrs` and `:cookie-name` beside them — and a readiness probe
+at `/health`, outside the session, answering 200 when `ready?` does and 503 otherwise —
+its two seconds bound `isValid`, while the borrow before it waits up to the pool's
+`:timeout-ms`, so a pool exhausted by load answers 503 too, and that late. `{:health {:path "/ready" :timeout-s 1}}` moves it, `{:health false}`
+drops it, and a plugin with no `:session` brings only the probe. Everything is checked
+when it is built, the session table included. Like the store, it is optional: web-base
+and `ring-core` are yours to declare, and a host that never requires it loads neither.
 
 ## The session store
 

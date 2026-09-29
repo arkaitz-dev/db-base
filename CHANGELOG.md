@@ -7,6 +7,13 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.3.0 — unreleased
+
+- `dev.arkaitz.db-base.web/plugin`: this library as a web-base 0.11.0 plugin — §8's
+  session store as `:session` and a readiness probe at `/health` as `:sessionless`, one
+  line of the host's `:plugins`. Optional: web-base and ring-core are the host's, and
+  only this namespace names web-base (SPEC §10, amended 2026-09-29).
+
 ## 0.2.2 — 2026-09-28
 
 - `dev.arkaitz.db-base.native` resolves a directory inside a GraalVM native image by

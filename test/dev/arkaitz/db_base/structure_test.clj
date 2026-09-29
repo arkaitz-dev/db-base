@@ -99,8 +99,10 @@
   reason the docstring above gives (decided with the user 2026-09-19). `integrant` is
   SPEC §10's, and only `dev.arkaitz.db-base.integrant` may name it — which this scan
   cannot express, since it asks the same question of every file, so a scan of its own
-  says that (decided with the user 2026-09-20, when the first host asked)."
-  #{"ragtime" "resauce" "integrant" "ring" "dev.arkaitz.db-base"})
+  says that (decided with the user 2026-09-20, when the first host asked). `dev.arkaitz.web-base`
+  is the root this library is a plugin of, and only `dev.arkaitz.db-base.web` may name it,
+  by a scan of its own below (the user's decision of 2026-09-29, SPEC §10)."
+  #{"ragtime" "resauce" "integrant" "ring" "dev.arkaitz.web-base" "dev.arkaitz.db-base"})
 
 (def ^:private class-roots #{"java" "javax" "clojure.lang" "com.zaxxer.hikari"})
 
@@ -599,8 +601,11 @@
   namespace did. So an exemption written for a namespace that does not need ring reds,
   and the hole cannot be widened by adding a name here. §10's Integrant scan sets the
   precedent: it asserts that its one exempt file DOES reference integrant, because a scan
-  that found nothing there would be finding nothing anywhere."
-  #{'dev.arkaitz.db-base.session})
+  that found nothing there would be finding nothing anywhere.
+
+  `dev.arkaitz.db-base.web` needs web-base as well as ring — both the host's — and it
+  requires §8's store first, so on a consumer's classpath it fails naming ring too."
+  #{'dev.arkaitz.db-base.session 'dev.arkaitz.db-base.web})
 
 (defn- loading-report
   "One JVM on the classpath a CONSUMER resolves — `-Srepro`, so no alias and no user
@@ -1071,6 +1076,54 @@
                  " may name it, and a require of it elsewhere compiles, loads and passes every"
                  " other test"))))))
 
+;; --- web-base, named by one namespace -----------------------------------------
+
+(def ^:private web-exempt-path "dev/arkaitz/db_base/web.clj")
+(def ^:private web-exempt-ns 'dev.arkaitz.db-base.web)
+
+(defn- web-base-name?
+  "A name that ties a source to web-base: a symbol or keyword in one of its namespaces, the
+  prefix of a prefix-list require, or the exempt namespace named at all, which would bring
+  web-base with it. `:wb/…` route-data keywords are data, and never count."
+  [x]
+  (let [hit? (fn [s] (and s (or (= s "dev.arkaitz.web-base") (str/starts-with? s "dev.arkaitz.web-base."))))]
+    (and (or (symbol? x) (keyword? x))
+         (boolean (or (hit? (namespace x))
+                      (and (symbol? x) (nil? (namespace x)) (hit? (name x)))
+                      (= (str web-exempt-ns) (namespace x))
+                      (= (str web-exempt-ns) (str x)))))))
+
+(defn- web-base-in [text]
+  (vec (distinct (filter web-base-name? (mapcat walk-with-tags (read-all-forms text))))))
+
+(deftest only-the-web-namespace-references-web-base
+  ;; SPEC §10, amended 2026-09-29: web-base is the root and db-base a plugin of it, through
+  ;; one optional namespace. A require of it anywhere else compiles, loads and passes every
+  ;; other test here, whose classpath has web-base; a consumer's has not.
+  (testing "positive controls"
+    (is (= '[dev.arkaitz.web-base.response] (web-base-in "(ns x (:require [dev.arkaitz.web-base.response :as r]))"))
+        "a plain require")
+    (is (= '[dev.arkaitz.web-base] (web-base-in "(ns x (:require [dev.arkaitz.web-base [response :as r]]))"))
+        "a prefix-list require, where the prefix is what the reader leaves")
+    (is (= '[dev.arkaitz.web-base/handler] (web-base-in "(ns x) (defn f [c] (dev.arkaitz.web-base/handler c))"))
+        "a qualified call with no require")
+    (is (= [web-exempt-ns] (web-base-in (str "(ns x (:require [" web-exempt-ns "]))")))
+        "and the web namespace named from elsewhere, which would bring web-base along"))
+  (testing "controls: what must not fire"
+    (is (= [] (web-base-in "(ns x) (def r {:wb/log-path :template})")) "web-base's route-data keyword")
+    (is (= [] (web-base-in "(ns x (:require [dev.arkaitz.db-base.session :as s]))")) "this library itself"))
+  (let [files (source-files (src-root))]
+    (is (contains? files web-exempt-path)
+        (str "precondition: the exempt file is where its name says — found " (sort (keys files))))
+    (is (= '[dev.arkaitz.web-base.response]
+           (filterv #{'dev.arkaitz.web-base.response} (web-base-in (slurp (get files web-exempt-path)))))
+        "the exempt file does reference web-base, read from disk")
+    (is (= [] (vec (for [[path file] (sort (dissoc files web-exempt-path))
+                         offender    (web-base-in (slurp file))]
+                     [path offender])))
+        (str "SPEC §10: only " web-exempt-ns " may name web-base; the pool, the migrations and"
+             " the session store serve workers and command-line tools that have no web layer"))))
+
 ;; --- the public surface, var by var ----------------------------------------
 
 (def ^:private accepted-publics
@@ -1106,6 +1159,8 @@
                                         ;; tests stop querying it by hand.
                                         sessions "SPEC §10: every row of §8's table, through the test's own connection"
                                         session  "SPEC §10: one row of §8's table by id, or nil"}
+    ;; 2026-09-29, the user's decision (SPEC §10): the one value a web-base host installs.
+    dev.arkaitz.db-base.web            {plugin "SPEC §10: §8's store and a readiness probe, as a web-base plugin"}
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
                                         reclaim-expired! "SPEC §8: the operator's reclaim, because a timer is §9's"}
     dev.arkaitz.db-base.session.schema {table      "SPEC §8: the table's name, for a host that reads it"
@@ -1152,3 +1207,41 @@
     (is (= {} (surface-diff accepted-publics found))
         (str "SPEC §9 and CLAUDE.md: every public var of src is listed in `accepted-publics`"
              " with its reason. Decide an arrival there — do not widen this test"))))
+
+;; --- no reflection ------------------------------------------------------------
+
+(defn- reflection-warnings
+  "The reflection warnings a fresh JVM on this classpath prints while it compiles each
+  file of `paths` — a child, so recompiling the library cannot redefine what the other
+  tests of this run hold. Bounded: past two minutes the child is destroyed and the answer
+  says so."
+  [paths]
+  (let [code (str "(doseq [p " (pr-str (vec paths)) "] (binding [*warn-on-reflection* true] (load-file p)))")
+        proc (-> (ProcessBuilder. ^java.util.List [(str (System/getProperty "java.home") "/bin/java")
+                                                   "-cp" (System/getProperty "java.class.path")
+                                                   "clojure.main" "-e" code])
+                 (.redirectErrorStream true)
+                 (.start))
+        out  (future (slurp (.getInputStream proc)))]
+    (.close (.getOutputStream proc))
+    (if (.waitFor proc 120 TimeUnit/SECONDS)
+      {:exit (.exitValue proc) :warnings (filterv #(str/starts-with? % "Reflection warning") (str/split-lines @out))}
+      (do (.destroyForcibly proc) {:exit ::timed-out :warnings nil}))))
+
+(deftest no-namespace-of-src-calls-a-method-by-reflection
+  ;; A reflective call works on a JVM and fails in a native image the moment it runs,
+  ;; unless the host's reachability metadata happens to list it: web-base 0.10.0 and
+  ;; auth-base 0.8.0 each shipped one, found only when an image failed at boot.
+  (let [probe (File/createTempFile "reflection-probe" ".clj")]
+    (try
+      (spit probe "(ns reflection-probe) (defn f [x] (.getName x))")
+      (let [{:keys [exit warnings]} (reflection-warnings [(.getPath probe)])]
+        (is (= [0 1] [exit (count warnings)])
+            (str "control: an untyped call is reported, so a clean result below is a scan that looks: " exit " " warnings)))
+      (finally (.delete probe))))
+  (let [sources (source-files (src-root))
+        files   (map (fn [[_ ^File f]] (.getPath f)) (sort sources))
+        {:keys [exit warnings]} (reflection-warnings files)]
+    (is (every? #(contains? sources %) [anchor-path web-exempt-path "dev/arkaitz/db_base/session.clj"])
+        (str "precondition: the library's sources were found, not a subset: " (sort (keys sources))))
+    (is (= [0 []] [exit warnings]) "every call in src is resolved at compile time")))

@@ -45,7 +45,11 @@
                        {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                        com.h2database/h2      {:mvn/version "2.5.250"}
                        org.xerial/sqlite-jdbc {:mvn/version "3.53.4.0"}
-                       ring/ring-core         {:mvn/version "1.15.5"}}
+                       ring/ring-core         {:mvn/version "1.15.5"}
+                       ;; The host's, like ring: only `dev.arkaitz.db-base.web` names it,
+                       ;; a scan says so, and a consumer that never requires that namespace
+                       ;; never loads it (SPEC §10, 2026-09-29).
+                       dev.arkaitz/web-base   {:mvn/version "0.11.0"}}
          ;; H2's brute-force delay is JVM-global: every refused login doubles it and
          ;; the next correct login anywhere sleeps a random part of it
          ;; (org.h2.engine.Engine.validateUserAndPassword), so one test that logs in

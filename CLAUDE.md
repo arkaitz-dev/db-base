@@ -325,9 +325,13 @@ things standing between a convenient `RETURNING` and a library that belongs to o
 vendor.
 
 **3 · It may implement a port defined by a stable third party; it must never depend on
-a sibling module of ours.** Ring's session store is three functions old enough to
-trust. auth-base's store is ours, and an implementation here would lock two of our
-libraries to each other's releases in both directions.
+a sibling module of ours — except the root.** Ring's session store is three functions
+old enough to trust. auth-base's store is ours, and an implementation here would lock
+two of our libraries to each other's releases in both directions. **Amended 2026-09-29
+by the user's decision** (SPEC §10): web-base is the root the set is built on, and
+`dev.arkaitz.db-base.web` is this library as its plugin — optional, web-base undeclared
+like ring, and the only namespace a scan lets name it. auth-base remains a sibling and
+remains forbidden.
 
 ## Traps already identified — do not rediscover them
 
