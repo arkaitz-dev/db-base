@@ -330,6 +330,26 @@ threads would be a lifecycle you did not ask for (`SPEC.md` §9).
   unread since the last sweep, which on a public site is mostly visitors who never signed
   in.
 
+## Native images
+
+A GraalVM native image lists a classpath directory through a `resource:` URL, which
+resauce — through which ragtime and this library list a migration prefix — does not
+know, so every boot of a binary fails saying the migrations under the prefix could not
+be loaded. Require `dev.arkaitz.db-base.native` (since 0.2.1) once, anywhere the image
+loads — the host's main namespace — and it teaches resauce to list one:
+
+```clojure
+(ns shop.main
+  (:require [dev.arkaitz.db-base.native]   ; migrations inside a native image
+            …))
+```
+
+It is inert on a JVM, which never produces that protocol, and optional like the
+Integrant namespace: requiring it is the opt-in. A migration prefix in an image must hold
+files only, which `start` asks for anyway. The host template (`dev.arkaitz/app`) builds
+native images this way, with web-base's own `native` namespace beside it; the demos in
+this repository are JVM-only.
+
 ## What it will not do
 
 - **Read a file nobody named.** Configuration arrives as a map. The connection details,

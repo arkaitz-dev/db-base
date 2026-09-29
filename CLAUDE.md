@@ -72,8 +72,13 @@ sees what the everyday suite cannot, and it found §8's column on its first run.
 and `hosts-test/`, the one support namespace the three last share on their `-test` aliases: `structure_test`'s logging-backend scan reads
 the running JVM's classpath, and the web stack brings logback. Its own docstring says a
 backend arriving through a test extra "reds falsely but visibly, and the fix is to move
-it, never to filter the scan". They are four aliases and two directories, and nothing a
-consumer receives changes because either exists.
+it, never to filter the scan". They are eight aliases and five directories, and nothing a
+consumer receives changes because any of them exists.
+
+**The demos run on a JVM only.** They carry neither the `native` namespaces of web-base
+and db-base nor the asynchronous logback of a production host: those live in the host
+template (`../app-template`), which builds and verifies native images. A demo is where a
+library's contract is exercised, not a deployment recipe.
 
 Every host consumes **web-base 0.9.0 and auth-base 0.7.0 as releases** (2026-09-29),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed. A
