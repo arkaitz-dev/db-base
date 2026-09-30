@@ -162,7 +162,8 @@
 (defn config
   "A configuration over `url` whose host migrations come from `db-base-test/<prefix>`.
   Secrets in every field that has one, so the leak check has something to find. The
-  borrow timeout is wide because nothing that uses this asserts a duration and the first
+  borrow timeout is wide — the one duration asserted over it, a library run's lock wait,
+  is bounded by its own wait and this config's 1000 ms, not by the borrow — and the first
   SQLite connection of a JVM unpacks a native library: measured 655 ms cold against 0 ms
   warm, and a loaded machine turned 1000 ms into a boot that failed for the wrong reason.
   `:sessions` is `:none` here; a test that wants this library's own run assocs it."
