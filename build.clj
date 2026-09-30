@@ -4,7 +4,7 @@
             [release]))
 
 (def lib 'dev.arkaitz/db-base)
-(def version "0.3.0")
+(def version "0.4.0")
 (def url "https://github.com/arkaitz-dev/db-base")
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar" (name lib) version))

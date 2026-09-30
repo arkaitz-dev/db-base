@@ -7,7 +7,7 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-09-30
 
 - `:libraries` in `start`'s configuration: a library's own migrations — a classpath
   prefix and the control table to keep them in, a name ending in `_migrations` — run after
