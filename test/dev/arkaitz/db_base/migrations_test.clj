@@ -772,7 +772,8 @@
                        " VALUES ('lib_accounts_migrations', 'DEAD-LIBRARY-HOLDER', 1700000000000)"))
     (let [cfg (assoc (ts/config url "three")
                      :libraries [{:dir "db-base-test/lib-accounts" :table "lib_accounts_migrations" :lock-wait-ms 150}])
-          e   (bounded #(ts/thrown (fn [] (db/start cfg))))]
+          [e ms] (ts/elapsed-ms 15000 #(ts/thrown (fn [] (db/start cfg))))]
+      (is (<= 150 ms) (str engine ": it waited the library's own 150 ms before refusing, measured " ms " ms"))
       (is (= [(str "db-base: another instance holds the migration lock: DEAD-LIBRARY-HOLDER, taken at"
                    " 1700000000000 (epoch milliseconds), and 150 ms of [:libraries 0 :lock-wait-ms]"
                    " were not enough. If that instance is gone, the repair is: DELETE FROM"
