@@ -48,10 +48,14 @@ So a host declares, besides this library:
              :password   "…"                        ; required, never defaulted, "" allowed
              :pool       {:max 10 :timeout-ms 5000}
              :migrations {:dir "db/migration" :lock-wait-ms 60000}
-             :sessions   :none}))                   ; required: :none, or {:lock-wait-ms …} for the store below
+             :sessions   :none                      ; required: :none, or {:lock-wait-ms …} for the store below
+             ;; optional: a library's own migrations, each under its own control table
+             :libraries  [{:dir "dev/arkaitz/auth_base/migrations"
+                           :table "auth_base_migrations" :lock-wait-ms 60000}]}))
 
 (:datasource handle)         ; a javax.sql.DataSource for next.jdbc, or whatever you use
 (:migrations-applied handle) ; how many ran during this boot
+(:library-migrations-applied handle) ; {"auth_base_migrations" n}, one count per library
 (db/ready? handle 2)         ; does the database answer, within 2 seconds
 (db/pool-stats handle)       ; {:active 1 :idle 9 :total 10 :waiting 0}, for your metrics
 (db/stop handle)             ; closes the pool, returns nil

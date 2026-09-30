@@ -49,13 +49,15 @@
            [java.sql Connection DriverManager PreparedStatement ResultSet SQLException]
            [javax.sql DataSource]))
 
-(def ^:private config-keys #{:jdbc-url :user :password :pool :migrations :sessions})
+(def ^:private config-keys #{:jdbc-url :user :password :pool :migrations :sessions :libraries})
 
 (def ^:private pool-keys #{:max :timeout-ms})
 
 (def ^:private migrations-keys #{:dir :lock-wait-ms})
 
 (def ^:private sessions-keys #{:lock-wait-ms :dialect})
+
+(def ^:private library-keys #{:dir :table :lock-wait-ms})
 
 (def ^:private session-dialects
   "The session schemas a host may name under `[:sessions :dialect]`, each a dialect
@@ -102,6 +104,19 @@
    :blame      [:migrations :dir]
    :wait-blame [:migrations :lock-wait-ms]
    :wait-ms    wait-ms
+   :extra      {:dir dir}})
+
+(defn- library-dir-run
+  "How a library's run from `:libraries` names itself: like the host's — a classpath
+  prefix, loaded and refused the same way — under its own control table, blaming its own
+  entry."
+  [i {:keys [dir table lock-wait-ms]}]
+  {:table      table
+   :source     dir
+   :value      dir
+   :blame      [:libraries i :dir]
+   :wait-blame [:libraries i :lock-wait-ms]
+   :wait-ms    lock-wait-ms
    :extra      {:dir dir}})
 
 (defn- library-run
@@ -212,6 +227,39 @@
     :else
     (fail! ":sessions must be :none or a map of :lock-wait-ms and :dialect" [:sessions] sessions)))
 
+(def ^:private table-name
+  "What a library run's control table may be called. Its name is written into statements
+  — the lock row's id among them, between quotes — so it is an identifier and nothing
+  else, in the one case every engine folds the same way."
+  #"[a-z][a-z0-9_]{0,62}")
+
+(defn- validate-libraries!
+  "`:libraries`, a vector of `{:dir … :table … :lock-wait-ms …}`: each a migration run of
+  a library's own, under a control table and a lock row of its own (since 0.4.0). Absent
+  is none."
+  [libraries]
+  (when (some? libraries)
+    (when-not (and (vector? libraries) (every? map? libraries))
+      (fail! ":libraries must be a vector of {:dir :table :lock-wait-ms} maps" [:libraries] libraries))
+    (doseq [[i {:keys [dir table lock-wait-ms] :as library}] (map-indexed vector libraries)]
+      (refuse-unknown-keys! library library-keys [:libraries i])
+      (when-not (non-blank-string? dir)
+        (fail! (str "[:libraries " i " :dir] must be a non-blank string") [:libraries i :dir] dir))
+      (when-not (and (string? table) (re-matches table-name table))
+        (fail! (str "[:libraries " i " :table] must be a lower-case identifier: a letter, then"
+                    " letters, digits or _, at most 63")
+               [:libraries i :table] table))
+      ;; Each run is told apart by its control table, and the lock row by that name.
+      (when (#{host-migrations-table library-migrations-table lock-table schema/table} table)
+        (fail! (str "[:libraries " i " :table] " table " is one of this library's own tables")
+               [:libraries i :table] table))
+      (when-not (integer-between? 0 Integer/MAX_VALUE lock-wait-ms)
+        (fail! (str "[:libraries " i " :lock-wait-ms] must be an integer from 0 to " Integer/MAX_VALUE
+                    " milliseconds")
+               [:libraries i :lock-wait-ms] lock-wait-ms)))
+    (when-let [twice (first (for [[t n] (frequencies (map :table libraries)) :when (< 1 n)] t))]
+      (fail! (str ":libraries names the control table " twice " twice") [:libraries] twice))))
+
 (defn- validate! [config]
   (when-not (map? config)
     (throw (ex-info "db-base: configuration must be a map" {:config-key []})))
@@ -228,7 +276,8 @@
     (validate-migrations! migrations)
     ;; Asked for like everything else and never defaulted: a host says whether it wants
     ;; the table of §8 or not. `:none` is the opt-out, exactly as it is for :migrations.
-    (validate-sessions! sessions)))
+    (validate-sessions! sessions)
+    (validate-libraries! (:libraries config))))
 
 (defn- open-pool ^HikariDataSource [{:keys [jdbc-url user password pool]}]
   (let [{:keys [max timeout-ms]} pool
@@ -583,6 +632,8 @@
     :pool        {:max integer 1..2147483647 :timeout-ms integer 250..2147483646}
     :migrations  :none, or {:dir classpath-prefix :lock-wait-ms integer 0..2147483647}
     :sessions    :none, or {:lock-wait-ms integer 0..2147483647 :dialect :postgresql}
+    :libraries   optional: [{:dir classpath-prefix :table control-table
+                             :lock-wait-ms integer 0..2147483647} …] (since 0.4.0)
 
   `:sessions` asks for the table §8's session store keeps, and its migration runs
   **before** the host's, into a control table and under a lock row of this library's own,
@@ -593,6 +644,13 @@
   session schema differs from the portable one; it is never detected, and the handle's
   `:session-data-max` says what the table holds — an integer, or nil for unbounded — so
   the store refuses a session too long for it before the engine does.
+
+  `:libraries` are the migrations a library ships under a classpath prefix of its own —
+  auth-base's tables, say — each run after the session table and before the host's, into
+  a control table and under a lock row of its own, so a library's schema is migrated with
+  the library and never copied into the host's. The handle then carries
+  `:library-migrations-applied`, a map of control table to count. This library names no
+  other: the host names the prefix and the table.
 
   Migration ids sort as strings, so numbers are zero-padded; a `down` never runs.
 
@@ -635,13 +693,23 @@
                   (library-run (get-in config [:sessions :lock-wait-ms])
                                (get-in config [:sessions :dialect])))
         sessions (when library (session-schema (:sessions config)))
+        ;; Loaded, and refused, before any pool exists, as the host's source is.
+        libraries (vec (for [[i entry] (map-indexed vector (:libraries config))
+                             :let [lib-run (library-dir-run i entry)]]
+                         [lib-run (load-source lib-run)]))
         ds      (open-pool config)]
     (try
       (borrow-once! ds (get-in config [:pool :timeout-ms]))
-      (cond-> {:datasource ds}
-        library (assoc :session-migrations-applied (migrate! ds library (:migrations sessions))
-                       :session-data-max (:data-max sessions))
-        source  (assoc :migrations-applied (migrate! ds run source)))
+      (let [session-applied (when library (migrate! ds library (:migrations sessions)))
+            ;; After this library's own and before the host's: a host's schema refers to
+            ;; a library's tables — `account(subject)` — and never the other way round.
+            library-applied (into {} (for [[lib-run source] libraries]
+                                       [(:table lib-run) (migrate! ds lib-run source)]))]
+        (cond-> {:datasource ds}
+          library         (assoc :session-migrations-applied session-applied
+                                 :session-data-max (:data-max sessions))
+          (seq libraries) (assoc :library-migrations-applied library-applied)
+          source          (assoc :migrations-applied (migrate! ds run source))))
       (catch Throwable t
         (close-after-failure! ds t)
         (throw t)))))

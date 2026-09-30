@@ -1,0 +1,1 @@
+CREATE TABLE lib_account (subject VARCHAR(36) NOT NULL PRIMARY KEY)

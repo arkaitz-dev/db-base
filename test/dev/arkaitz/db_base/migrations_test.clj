@@ -729,3 +729,37 @@
         (ts/execute! url repair)
         (is (= [{:migrations-applied 1} []] [(ts/boot (ts/config url "plus-one")) (ts/lock-rows url)])
             (str engine ": the repair it names is the one that works, and the boot gives the lock back"))))))
+
+;; --- :libraries -----------------------------------------------------------------
+
+(defn- with-library [url host-prefix]
+  (assoc (ts/config url host-prefix)
+         :libraries [{:dir "db-base-test/lib-accounts" :table "lib_accounts_migrations" :lock-wait-ms 1000}]))
+
+(deftest a-librarys-migrations-run-before-the-hosts-under-their-own-history
+  (doseq [[engine url] (ts/engines)]
+    (let [handle (db/start (with-library url "lib-host"))]
+      (try
+        (is (= [{"lib_accounts_migrations" 1} 1]
+               [(:library-migrations-applied handle) (:migrations-applied handle)])
+            (str engine ": the library's run applied its one, and the host's its one"))
+        (finally (db/stop handle))))
+    (is (= [["from-host"]] (ts/query url "SELECT subject FROM lib_account"))
+        (str engine ": the host's migration wrote into the library's table, so the library's ran first"))
+    (is (= [["001-accounts"] ["001-accounts"]]
+           [(mapv first (ts/query url "SELECT id FROM lib_accounts_migrations"))
+            (recorded url)])
+        (str engine ": one id in two histories — each run keeps its own, so neither mistakes the other's"))
+    (is (= {:library-migrations-applied {"lib_accounts_migrations" 0} :migrations-applied 0}
+           (ts/boot (with-library url "lib-host")))
+        (str engine ": a second boot applies nothing in either"))))
+
+(deftest a-library-prefix-that-serves-nothing-is-refused-before-any-pool-naming-its-entry
+  (let [url    (ts/h2-memory-url "lib-empty")
+        before (ts/pool-number)
+        e      (ts/thrown #(db/start (assoc (ts/config url "three")
+                                            :libraries [{:dir "db-base-test/no-such-prefix" :table "lib_x" :lock-wait-ms 0}])))]
+    (is (= ["db-base: no migrations found under the classpath prefix db-base-test/no-such-prefix"
+            {:config-key [:libraries 0 :dir] :value "db-base-test/no-such-prefix"}]
+           (ts/pair e)))
+    (is (= before (ts/pool-number)) "refused before any pool was constructed")))

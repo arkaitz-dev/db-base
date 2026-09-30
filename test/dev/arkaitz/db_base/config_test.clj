@@ -31,7 +31,7 @@
    :pool       {:max 1 :timeout-ms 5000}
    :migrations :none :sessions :none})
 
-(def ^:private top-keys "[:jdbc-url :migrations :password :pool :sessions :user]")
+(def ^:private top-keys "[:jdbc-url :libraries :migrations :password :pool :sessions :user]")
 
 (defn- refusal [message data] [(str "db-base: " message) data])
 
@@ -143,7 +143,32 @@
      (for [v [nil -1 1.5 1.5M 3/2 "10" 2147483648 2147483648N]]
        [(str "[:sessions :lock-wait-ms] " (pr-str v))
         (assoc base :sessions {:lock-wait-ms v})
-        (sess-ms v)]))))
+        (sess-ms v)])
+     (let [lib   {:dir "db-base-test/three" :table "lib_a" :lock-wait-ms 1000}
+           libs  #(assoc base :libraries %)
+           ident (fn [v] (refusal (str "[:libraries 0 :table] must be a lower-case identifier: a letter, then"
+                                       " letters, digits or _, at most 63")
+                                  {:config-key [:libraries 0 :table] :value v}))]
+       (concat
+        [[":libraries a map, not a vector" (libs lib)
+          (refusal ":libraries must be a vector of {:dir :table :lock-wait-ms} maps" {:config-key [:libraries] :value lib})]
+         [":libraries a vector of something else" (libs ["x"])
+          (refusal ":libraries must be a vector of {:dir :table :lock-wait-ms} maps" {:config-key [:libraries] :value ["x"]})]
+         [":libraries entry with an unknown key" (libs [(assoc lib :name "a")])
+          (refusal "unknown key [:name] in [:libraries 0] — it takes [:dir :lock-wait-ms :table]"
+                   {:config-key [:libraries 0 :name]})]
+         [":libraries entry with a blank dir" (libs [(assoc lib :dir " ")])
+          (refusal "[:libraries 0 :dir] must be a non-blank string" {:config-key [:libraries 0 :dir] :value " "})]
+         [":libraries entry that is this library's own table" (libs [(assoc lib :table "ragtime_migrations")])
+          (refusal "[:libraries 0 :table] ragtime_migrations is one of this library's own tables"
+                   {:config-key [:libraries 0 :table] :value "ragtime_migrations"})]
+         [":libraries entry with a negative wait" (libs [(assoc lib :lock-wait-ms -1)])
+          (refusal "[:libraries 0 :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
+                   {:config-key [:libraries 0 :lock-wait-ms] :value -1})]
+         [":libraries naming one control table twice" (libs [lib (assoc lib :dir "db-base-test/fixed")])
+          (refusal ":libraries names the control table lib_a twice" {:config-key [:libraries] :value "lib_a"})]]
+        (for [v ["x'; DROP TABLE a; --" "Lib" "1lib" "" "a-b" (apply str "a" (repeat 63 "b")) :lib nil]]
+          [(str "[:libraries 0 :table] " (pr-str v)) (libs [(assoc lib :table v)]) (ident v)]))))))
 
 (deftest start-refuses-each-malformed-configuration-with-an-exact-message-and-config-key
   (let [handle (db/start base)]

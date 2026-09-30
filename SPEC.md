@@ -482,6 +482,24 @@ engines. Its columns can never change, because it
 exists before any migration could record a version of it: a different shape would be a
 different name.
 
+**A library's migrations, run beside the host's (amended 2026-09-30, the user's decision
+after a split panel).** Every host copied auth-base's four tables into its own migration
+directory, and when auth-base 0.8.0 added an index every host copied a fifth by hand, with
+nothing to notice a host that did not: its `check!` reads names only. So `start` takes
+`:libraries`, a vector of `{:dir :table :lock-wait-ms}`: each a classpath prefix a library
+ships, run exactly as the host's is — loaded and refused before any pool exists, applied
+under the lock — but into a control table of its own named by `:table`, which also keys
+its lock row. They run after §8's table and before the host's, because a host's schema
+refers to a library's (`account(subject)`) and never the other way round. Each run has a
+history of its own, so one id in two of them is two migrations, and a library dropped from
+the list leaves its history untouched rather than refused. This library names no other:
+the host names the prefix and the table, which is why rule 3 of CLAUDE.md is untouched.
+The table name is written into statements, so it is refused unless it is a lower-case
+identifier, and refused if it is one of this library's own. No baseline was built for
+databases that had recorded a library's tables under the host's ids: nothing that exists
+needs one — every deployment so far is a demo's SQLite file — and adopting a history
+would have meant either a permanent set of retired ids or a write across two lock rows.
+
 ## 8 · The session store it ships
 
 This is the reason the library is worth existing today, and it settles a question that

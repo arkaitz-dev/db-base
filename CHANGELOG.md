@@ -7,6 +7,14 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.4.0 — unreleased
+
+- `:libraries` in `start`'s configuration: a library's own migrations — a classpath
+  prefix and the control table to keep them in — run after the session table and before
+  the host's, each under its own history and lock row. The handle carries
+  `:library-migrations-applied`. auth-base 0.10.0 ships its tables this way, so a host
+  stops copying them.
+
 ## 0.3.0 — 2026-09-29
 
 - `dev.arkaitz.db-base.web/plugin`: this library as a web-base 0.11.0 plugin — §8's
