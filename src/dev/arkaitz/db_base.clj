@@ -230,8 +230,10 @@
 (def ^:private table-name
   "What a library run's control table may be called. Its name is written into statements
   — the lock row's id among them, between quotes — so it is an identifier and nothing
-  else, in the one case every engine folds the same way."
-  #"[a-z][a-z0-9_]{0,62}")
+  else, in the one case every engine folds the same way. It ends in `_migrations`: ragtime
+  takes any existing table of that name as its history, so a name that could also be a
+  host's table of data would be adopted in silence, and no reserved word ends so."
+  #"[a-z][a-z0-9_]{0,51}_migrations")
 
 (defn- validate-libraries!
   "`:libraries`, a vector of `{:dir … :table … :lock-wait-ms …}`: each a migration run of
@@ -246,8 +248,8 @@
       (when-not (non-blank-string? dir)
         (fail! (str "[:libraries " i " :dir] must be a non-blank string") [:libraries i :dir] dir))
       (when-not (and (string? table) (re-matches table-name table))
-        (fail! (str "[:libraries " i " :table] must be a lower-case identifier: a letter, then"
-                    " letters, digits or _, at most 63")
+        (fail! (str "[:libraries " i " :table] must be a lower-case identifier ending in _migrations:"
+                    " a letter, then letters, digits or _, at most 63")
                [:libraries i :table] table))
       ;; Each run is told apart by its control table, and the lock row by that name.
       (when (#{host-migrations-table library-migrations-table lock-table schema/table} table)

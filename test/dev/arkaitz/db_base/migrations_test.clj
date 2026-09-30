@@ -758,8 +758,41 @@
   (let [url    (ts/h2-memory-url "lib-empty")
         before (ts/pool-number)
         e      (ts/thrown #(db/start (assoc (ts/config url "three")
-                                            :libraries [{:dir "db-base-test/no-such-prefix" :table "lib_x" :lock-wait-ms 0}])))]
+                                            :libraries [{:dir "db-base-test/no-such-prefix" :table "lib_x_migrations" :lock-wait-ms 0}])))]
     (is (= ["db-base: no migrations found under the classpath prefix db-base-test/no-such-prefix"
             {:config-key [:libraries 0 :dir] :value "db-base-test/no-such-prefix"}]
            (ts/pair e)))
     (is (= before (ts/pool-number)) "refused before any pool was constructed")))
+
+(deftest a-library-run-waits-on-its-own-lock-row-and-a-stuck-one-names-its-own-key
+  (doseq [[engine url] (ts/engines)]
+    (ts/execute! url (str "CREATE TABLE db_base_migration_lock (id VARCHAR(64) NOT NULL PRIMARY KEY,"
+                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
+    (ts/execute! url (str "INSERT INTO db_base_migration_lock (id, holder, acquired_at)"
+                       " VALUES ('lib_accounts_migrations', 'DEAD-LIBRARY-HOLDER', 1700000000000)"))
+    (let [cfg (assoc (ts/config url "three")
+                     :libraries [{:dir "db-base-test/lib-accounts" :table "lib_accounts_migrations" :lock-wait-ms 150}])
+          e   (bounded #(ts/thrown (fn [] (db/start cfg))))]
+      (is (= [(str "db-base: another instance holds the migration lock: DEAD-LIBRARY-HOLDER, taken at"
+                   " 1700000000000 (epoch milliseconds), and 150 ms of [:libraries 0 :lock-wait-ms]"
+                   " were not enough. If that instance is gone, the repair is: DELETE FROM"
+                   " db_base_migration_lock WHERE id = 'lib_accounts_migrations'")
+              {:config-key [:libraries 0 :lock-wait-ms] :value 150 :dir "db-base-test/lib-accounts"
+               :holder "DEAD-LIBRARY-HOLDER" :acquired-at 1700000000000}]
+             (ts/pair e))
+          (str engine ": the library's run waited its own wait on its own row, and says which key to raise"))
+      (is (not (contains? (ts/tables url) "lib_account"))
+          (str engine ": and ran nothing")))))
+
+(deftest a-librarys-migrations-run-after-the-session-table
+  (doseq [[engine url] (ts/engines)]
+    (is (= {:session-migrations-applied 1 :session-data-max 4000
+            :library-migrations-applied {"lib_seed_migrations" 1}}
+           (ts/boot (assoc (ts/config url "three")
+                           :migrations :none
+                           :sessions {:lock-wait-ms 1000}
+                           :libraries [{:dir "db-base-test/lib-after-sessions" :table "lib_seed_migrations"
+                                        :lock-wait-ms 1000}])))
+        (str engine ": both ran"))
+    (is (= [["from-a-library"]] (ts/query url "SELECT id FROM db_base_sessions"))
+        (str engine ": the library's migration wrote into the session table, which was already there"))))

@@ -144,10 +144,10 @@
        [(str "[:sessions :lock-wait-ms] " (pr-str v))
         (assoc base :sessions {:lock-wait-ms v})
         (sess-ms v)])
-     (let [lib   {:dir "db-base-test/three" :table "lib_a" :lock-wait-ms 1000}
+     (let [lib   {:dir "db-base-test/three" :table "lib_a_migrations" :lock-wait-ms 1000}
            libs  #(assoc base :libraries %)
-           ident (fn [v] (refusal (str "[:libraries 0 :table] must be a lower-case identifier: a letter, then"
-                                       " letters, digits or _, at most 63")
+           ident (fn [v] (refusal (str "[:libraries 0 :table] must be a lower-case identifier ending in _migrations:"
+                                       " a letter, then letters, digits or _, at most 63")
                                   {:config-key [:libraries 0 :table] :value v}))]
        (concat
         [[":libraries a map, not a vector" (libs lib)
@@ -166,8 +166,12 @@
           (refusal "[:libraries 0 :lock-wait-ms] must be an integer from 0 to 2147483647 milliseconds"
                    {:config-key [:libraries 0 :lock-wait-ms] :value -1})]
          [":libraries naming one control table twice" (libs [lib (assoc lib :dir "db-base-test/fixed")])
-          (refusal ":libraries names the control table lib_a twice" {:config-key [:libraries] :value "lib_a"})]]
-        (for [v ["x'; DROP TABLE a; --" "Lib" "1lib" "" "a-b" (apply str "a" (repeat 63 "b")) :lib nil]]
+          (refusal ":libraries names the control table lib_a_migrations twice" {:config-key [:libraries] :value "lib_a_migrations"})]
+         [":libraries entry that is this library's own session history" (libs [(assoc lib :table "db_base_migrations")])
+          (refusal "[:libraries 0 :table] db_base_migrations is one of this library's own tables"
+                   {:config-key [:libraries 0 :table] :value "db_base_migrations"})]]
+        (for [v ["x'; DROP TABLE a; --" "Lib_migrations" "1lib_migrations" "" "a-b_migrations" "lib_a" "user"
+                "audit" (str (apply str "a" (repeat 52 "b")) "_migrations") :lib nil]]
           [(str "[:libraries 0 :table] " (pr-str v)) (libs [(assoc lib :table v)]) (ident v)]))))))
 
 (deftest start-refuses-each-malformed-configuration-with-an-exact-message-and-config-key

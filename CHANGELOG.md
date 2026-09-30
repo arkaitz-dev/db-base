@@ -10,8 +10,8 @@ hosts or its tests is not.
 ## 0.4.0 — unreleased
 
 - `:libraries` in `start`'s configuration: a library's own migrations — a classpath
-  prefix and the control table to keep them in — run after the session table and before
-  the host's, each under its own history and lock row. The handle carries
+  prefix and the control table to keep them in, a name ending in `_migrations` — run after
+  the session table and before the host's, each under its own history and lock row. The handle carries
   `:library-migrations-applied`. auth-base 0.10.0 ships its tables this way, so a host
   stops copying them.
 

@@ -495,7 +495,9 @@ history of its own, so one id in two of them is two migrations, and a library dr
 the list leaves its history untouched rather than refused. This library names no other:
 the host names the prefix and the table, which is why rule 3 of CLAUDE.md is untouched.
 The table name is written into statements, so it is refused unless it is a lower-case
-identifier, and refused if it is one of this library's own. No baseline was built for
+identifier; it must end in `_migrations`, because ragtime takes any existing table of
+that name as its history and a name a host's table of data could also have would be
+adopted in silence; and it is refused if it is one of this library's own. No baseline was built for
 databases that had recorded a library's tables under the host's ids: nothing that exists
 needs one — every deployment so far is a demo's SQLite file — and adopting a history
 would have meant either a permanent set of retired ids or a write across two lock rows.
