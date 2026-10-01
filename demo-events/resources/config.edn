@@ -12,7 +12,10 @@
   :password   ""
   :pool       {:max 4 :timeout-ms 5000}
   :migrations {:dir "demo-events/migration" :lock-wait-ms 5000}
-  :sessions   {:lock-wait-ms 5000}}
+  :sessions   {:lock-wait-ms 5000}
+  ;; auth-base's tables, shipped in its jar and run before this host's own, which
+  ;; refer to account(subject): nothing of them is copied here.
+  :libraries  [{:dir "dev/arkaitz/auth_base/migrations" :table "auth_base_migrations" :lock-wait-ms 5000}]}
 
  :demo-events/auth-config {:db       #ig/ref :dev.arkaitz.db-base/database
                            :port     #ig/ref :demo-events/port

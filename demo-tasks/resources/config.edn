@@ -25,7 +25,10 @@
   :migrations {:dir "demo-tasks/migration" :lock-wait-ms 5000}
   ;; §8's own table, applied in a run of its own before the host's, so that a
   ;; host resetting its migrations does not take the library's schema with it.
-  :sessions   {:lock-wait-ms 5000}}
+  :sessions   {:lock-wait-ms 5000}
+  ;; auth-base's tables, shipped in its jar and run before this host's own, which
+  ;; refer to account(subject): nothing of them is copied here.
+  :libraries  [{:dir "dev/arkaitz/auth_base/migrations" :table "auth_base_migrations" :lock-wait-ms 5000}]}
 
  ;; The ceremony's store and its `deliver!` are code, and code does not live in
  ;; EDN — so what is data sits here and `demo-tasks.system` builds the rest.
