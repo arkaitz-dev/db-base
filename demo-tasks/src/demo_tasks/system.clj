@@ -32,9 +32,9 @@
 (defmethod ig/init-key :demo-tasks/port [_ port] port)
 
 (defmethod ig/init-key :demo-tasks/auth-config [_ {:keys [db port ttl-ms]}]
-  ;; The store is auth-base's own, over the pool db-base opened; this host keeps
-  ;; the three tables as its migrations 001–003, copied from `auth-jdbc/ddl`, and
-  ;; `check!` is what makes a copy that drifted fail here rather than at a login.
+  ;; The store is auth-base's own, over the pool db-base opened; its tables come from
+  ;; auth-base's jar through `:libraries`, and `check!` is what makes tables that
+  ;; drifted from this version fail here rather than at a login.
   {:store    (auth-jdbc/store (auth-jdbc/check! (:datasource db)))
    ;; The console, because a demo that needed a mail server would be a demo
    ;; about mail servers. A real host swaps this one function and nothing else.

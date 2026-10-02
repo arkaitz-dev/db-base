@@ -206,9 +206,8 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       auth-base 0.5.1** (`b6ef21f`, 2026-09-28), with the default normal form made
       independent of the JVM's locale (`2d64192`: under tr_TR it had turned `ADA@IX.TEST`
       into `ada@ıx.test`). Deployed and verified 2026-09-28; the hosts are on it.
-      web-base still lower-cases header names with the default locale in several places
-      (`security.clj`, `render.clj`, `testing.clj`) — consistent within one JVM, so no
-      defect is known, but unaudited. Originally (found
+      web-base's case conversions were audited 2026-10-01: every one in `src` passes
+      `Locale/ROOT`. Originally (found
       2026-09-28 by the Phase-3 panel on the hosts' bounds). `handlers.clj` `submitted?`
       counts the raw value against 320, and the ceremony then lower-cases it: "İ" becomes
       two characters, so a 320-character address can reach `login_challenge.identifier`

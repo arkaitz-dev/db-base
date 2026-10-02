@@ -28,6 +28,8 @@
   :sessions   {:lock-wait-ms 5000}
   ;; auth-base's tables, shipped in its jar and run before this host's own, which
   ;; refer to account(subject): nothing of them is copied here.
+  ;; All three keys are required, and :table never changes once a database has
+  ;; booted: its history is recorded there, and under another name it would rerun.
   :libraries  [{:dir "dev/arkaitz/auth_base/migrations" :table "auth_base_migrations" :lock-wait-ms 5000}]}
 
  ;; The ceremony's store and its `deliver!` are code, and code does not live in
