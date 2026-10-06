@@ -45,6 +45,9 @@
  :demo-tasks/web-config {:db                  #ig/ref :dev.arkaitz.db-base/database
                          :ceremony            #ig/ref :dev.arkaitz.auth-base/ceremony
                          :session-lifetime-ms 3600000
+                         ;; A used session slides every ten minutes, never past
+                         ;; twelve hours from its sign-in.
+                         :session-renew       {:every-ms 600000 :absolute-ms 43200000}
                          ;; The named opt-out for http://localhost — Safari does
                          ;; not send a Secure cookie there.
                          :secure?             false}

@@ -14,6 +14,7 @@
   table, which is both independent of the code under test and the only way a
   test can be sure it has the token that was actually issued."
   (:require [clojure.string :as str]
+            [clojure.edn :as edn]
             [clojure.test :refer [deftest is]]
             [hosts.support :as support
              :refer [GET POST browser challenge-token hop landed open-link! session-key-of sign-in! with-host]]
@@ -237,6 +238,36 @@
             (str "and added no rows either. Not an absolute count: the anonymous visits before"
                  " the login render its form and leave rows of their own, because the CSRF token lives in the"
                  " session — which a page with a form needs, and nothing else pays"))))))
+
+(deftest a-session-last-renewed-a-window-ago-moves-its-row-and-its-cookie-on-the-next-page
+  ;; The host's `:session-renew` reaches web-base through db-base's plugin. A row is
+  ;; made due by planting an old `renewed-at` in its data and pulling its expiry back,
+  ;; through a connection of the test's own, so a renewal is the only thing that can
+  ;; move the expiry past where this test left it.
+  (with-host [app path]
+    (let [jar (browser)]
+      (sign-in! app path jar "ada@example.test")
+      (let [key     (session-key-of jar)
+            expiry  #(:expires-at (support/session path key))
+            [data]  (first (support/rows path "SELECT data FROM db_base_sessions WHERE id = ?" key))
+            stale   (assoc (edn/read-string data)
+                           :dev.arkaitz.web-base.session/renewed-at (- (System/currentTimeMillis) 600000))
+            planted (- (expiry) 1000)]
+        (jdbc/execute! (support/datasource path)
+                       ["UPDATE db_base_sessions SET data = ?, expires_at = ? WHERE id = ?" (pr-str stale) planted key])
+        (is (= planted (expiry)) "witness: the plant landed")
+        (let [before   (System/currentTimeMillis)
+              response (GET app jar "/")
+              after    (System/currentTimeMillis)]
+          (is (= 200 (:status response)) "witness: still signed in")
+          (is (<= (+ before support/session-lifetime-ms) (expiry) (+ after support/session-lifetime-ms))
+              "the row now expires a lifetime from this page")
+          (is (some #(str/includes? % "Max-Age=777") (get-in response [:headers "Set-Cookie"]))
+              "and its cookie went again, as long as the row")
+          (is (= key (session-key-of jar)) "under the same key, so the device row still names it"))
+        (let [renewed (expiry)]
+          (GET app jar "/")
+          (is (= renewed (expiry)) "the page after it, inside the window, writes nothing"))))))
 
 (deftest health-answers-from-the-database-and-not-from-a-constant
   (with-host [app _path]

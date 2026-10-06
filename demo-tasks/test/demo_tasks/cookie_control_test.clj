@@ -33,6 +33,7 @@
                                 {:db                  (get system :dev.arkaitz.db-base/database)
                                  :ceremony            (get system :dev.arkaitz.auth-base/ceremony)
                                  :session-lifetime-ms support/session-lifetime-ms
+                                 :session-renew       {:every-ms 600000 :absolute-ms 43200000}
                                  :secure?             false})
             app    (wb/handler
                     (assoc built :session
@@ -40,7 +41,8 @@
                            ;; "only the store changed" describes what this does
                            ;; rather than hoping for it.
                            {:key          "AAECAwQFBgcICQoLDA0ODw=="
-                            :cookie-attrs (get-in built [:session :cookie-attrs])}))]
+                            :cookie-attrs (get-in built [:session :cookie-attrs])
+                            :renew        (get-in built [:session :renew])}))]
         (try (f app path) (finally (ig/halt! system))))
       (finally (support/delete-db! path)))))
 

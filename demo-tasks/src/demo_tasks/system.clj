@@ -49,7 +49,7 @@
    ;; on, which auth-base requires and which revocation depends on.
    :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})
 
-(defmethod ig/init-key :demo-tasks/web-config [_ {:keys [db ceremony session-lifetime-ms secure?]}]
+(defmethod ig/init-key :demo-tasks/web-config [_ {:keys [db ceremony session-lifetime-ms session-renew secure?]}]
   ;; The store is built once, by db-base's plugin, and handed to two places: to web-base
   ;; as the plugin's `:session`, and to the routes, which need it to end one session by
   ;; id. **That is the whole of what db-base §12 said could not be done without a
@@ -63,7 +63,8 @@
                                                ;; The cookie's expiry is a courtesy to the
                                                ;; browser; the row's decides, and it is the
                                                ;; same number so the two cannot disagree.
-                                               :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}}})]
+                                               :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}
+                                               :renew        session-renew}})]
     {:routes  (routes/routes db ceremony (get-in db-plugin [:session :store]))
      :plugins [db-plugin
                (auth-web/plugin ceremony (assoc views/auth-paths
