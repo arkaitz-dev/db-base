@@ -106,7 +106,7 @@ echoed, in the message or in the data.
 
 Since 0.3.0, `dev.arkaitz.db-base.web/plugin` is the value web-base 0.11.0's `:plugins`
 takes: the session store below as `:session` — `:lifetime-ms` and `:readers` for the
-store, web-base's `:cookie-attrs` and `:cookie-name` beside them — and a readiness probe
+store, web-base's `:cookie-attrs`, `:cookie-name` and `:renew` beside them — and a readiness probe
 at `/health`, outside the session, answering 200 when `ready?` does and 503 otherwise —
 its two seconds bound `isValid`, while the borrow before it waits up to the pool's
 `:timeout-ms`, so a pool exhausted by load answers 503 too, and that late. `{:health {:path "/ready" :timeout-s 1}}` moves it, `{:health false}`
@@ -146,8 +146,19 @@ refusal on every request that touches a session.
 **The expiry is absolute, not sliding.** A row's expiry is set when the row is written,
 and a signed-in page in steady state writes nothing — so a person active all afternoon is
 signed out `:lifetime-ms` after the last write (the login, or the first page that minted
-a CSRF token), however busy they were. Choose the lifetime for that, or have a page write
-the session on purpose when you want it to slide.
+a CSRF token), however busy they were. Since 0.5.0 the plugin passes web-base 0.15.0's
+`:renew` through, which writes a used session again once per window — every write here
+sets the expiry a lifetime ahead — until a cap after the sign-in:
+
+```clojure
+{:session {:lifetime-ms 3600000 :cookie-attrs {:max-age 3600}
+           :renew {:every-ms 600000 :absolute-ms 43200000}}}
+```
+
+`:every-ms` must be shorter than `:lifetime-ms`, or the row would expire before a renewal
+was due; the plugin refuses it naming `[:session :renew :every-ms]`. A renewal that lands
+on a row a sign-out has just deleted updates nothing: this store never inserts on that
+path, so it cannot bring the session back.
 
 Expiry is judged by the clock of the instance serving the request, never the database's:
 behind a load balancer, keep the instances' clocks synchronised, or one expires a

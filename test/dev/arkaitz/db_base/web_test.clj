@@ -9,7 +9,9 @@
             [dev.arkaitz.db-base.testing :as dbt]
             [dev.arkaitz.db-base.web :as db-web]
             [dev.arkaitz.web-base :as wb]
-            [dev.arkaitz.web-base.testing :as wbt]))
+            [dev.arkaitz.web-base.session :as wb-session]
+            [dev.arkaitz.web-base.testing :as wbt]
+            [ring.middleware.session.store :as store]))
 
 (defn- booted [url]
   (db/start (assoc (ts/config url "three") :migrations :none :sessions {:lock-wait-ms 1000})))
@@ -56,6 +58,36 @@
             "the row expires the host's lifetime after it was written")
         (is (= "#x/y 1" (get-in (wbt/visit b :get "/show") [:response :body]))
             "and a tagged value is read back through the host's readers"))
+      (finally (db/stop handle)))))
+
+(deftest a-due-session-moves-its-row-and-its-cookie-forward--a-fresh-one-neither
+  (let [url    (ts/h2-memory-url "web-renew")
+        handle (booted url)]
+    (try
+      (let [plugin (db-web/plugin handle {:session {:lifetime-ms  60000
+                                                    :cookie-attrs {:max-age 60}
+                                                    :renew        {:every-ms 30000 :absolute-ms 600000}}})
+            app    (wb/handler {:plugins [plugin]
+                                :routes  [["/" {:get (fn [_] {:status 200 :body "home"})}]]})
+            plant  (fn [renewed] (store/write-session (get-in plugin [:session :store]) nil
+                                                      {:n 1 ::wb-session/renewed-at renewed
+                                                       ::wb-session/born-at (- (System/currentTimeMillis) 60000)}))
+            row    #(dbt/session (ts/config url "three") %)
+            visit  #(wbt/visit (assoc-in (wbt/browser app) [:jar "ring-session"] %) :get "/")
+            due    (plant (- (System/currentTimeMillis) 30000))
+            fresh  (plant (- (System/currentTimeMillis) 15000))
+            [due-before fresh-before] (map (comp :expires-at row) [due fresh])
+            before (System/currentTimeMillis)
+            b-due  (visit due)
+            after  (System/currentTimeMillis)
+            b-fresh (visit fresh)]
+        (is (= "home" (get-in b-due [:response :body])) "witness: the page answered")
+        (is (<= (+ before 60000) (:expires-at (row due)) (+ after 60000))
+            (str "the due row expires a lifetime from this request, where it was written for " due-before))
+        (is (re-find #"(?i)Max-Age=60" (str/join ";" (get-in b-due [:response :headers "Set-Cookie"])))
+            "and its cookie goes again with the host's Max-Age")
+        (is (= fresh-before (:expires-at (row fresh))) "a fresh row is not written")
+        (is (empty? (get-in b-fresh [:response :headers "Set-Cookie"])) "nor its cookie sent"))
       (finally (db/stop handle)))))
 
 (deftest the-plugin-brings-a-session-and-a-probe-and-nothing-else
@@ -108,8 +140,11 @@
                ["an unknown key" {:sesion {}}
                 ["db-base web: unknown key [:sesion] in the options — it takes [:health :session]" {:config-key [:sesion]}]]
                ["an unknown session key" {:session {:lifetime-ms 1 :max-age 5}}
-                ["db-base web: unknown key [:max-age] in [:session] — it takes [:cookie-attrs :cookie-name :lifetime-ms :readers]"
+                ["db-base web: unknown key [:max-age] in [:session] — it takes [:cookie-attrs :cookie-name :lifetime-ms :readers :renew]"
                  {:config-key [:session :max-age]}]]
+               ["a renewal no shorter than the row's life" {:session {:lifetime-ms 60000 :renew {:every-ms 60000 :absolute-ms 600000}}}
+                ["db-base web: [:session :renew :every-ms] must be shorter than [:session :lifetime-ms]"
+                 {:config-key [:session :renew :every-ms]}]]
                ["health neither map nor false" {:health true}
                 ["db-base web: :health must be a map, or false for no probe" {:config-key [:health]}]]
                ["a relative probe path" {:health {:path "health"}}
@@ -130,6 +165,8 @@
         (is (= expected (ts/attempt #(db-web/plugin handle opts))) (str "refused: " label)))
       (is (= [:session :lifetime-ms] (:config-key (second (ts/attempt #(db-web/plugin handle {:session {}})))))
           "the store's own refusal reaches the host at construction")
+      (is (map? (db-web/plugin handle {:session {:lifetime-ms 60000 :renew {:every-ms 59999 :absolute-ms 600000}}}))
+          "control: a renewal just inside the row's life is accepted")
       (finally (db/stop handle))))
   (let [url    (ts/h2-memory-url "web-no-table")
         handle (db/start (assoc (ts/config url "three") :migrations :none))]

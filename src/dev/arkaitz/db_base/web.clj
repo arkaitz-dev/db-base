@@ -18,7 +18,7 @@
             [dev.arkaitz.db-base.session :as session]
             [dev.arkaitz.web-base.response :as response]))
 
-(def ^:private session-keys #{:lifetime-ms :readers :cookie-attrs :cookie-name})
+(def ^:private session-keys #{:lifetime-ms :readers :cookie-attrs :cookie-name :renew})
 
 (def ^:private health-defaults {:path "/health" :timeout-s 2})
 
@@ -39,7 +39,9 @@
   "The plugin value for web-base's `:plugins`, over `handle`, what `db/start` returned.
 
     :session  `{:lifetime-ms n}` for §8's store, which also takes `:readers`; web-base's
-              `:cookie-attrs` and `:cookie-name` ride beside it. Absent, the plugin
+              `:cookie-attrs`, `:cookie-name` and `:renew` (web-base 0.15.0) ride beside
+              it, and a `:renew :every-ms` that is not shorter than `:lifetime-ms` is
+              refused, since the row would expire before it was due. Absent, the plugin
               brings no session and the host gives its own.
     :health   `{:path \"/health\" :timeout-s 2}`, the defaults: a sessionless probe
               answering 200 when `ready?` does and 503 otherwise. `:timeout-s` is
@@ -53,6 +55,11 @@
   [handle {:keys [session health] :as opts}]
   (check-keys! opts #{:session :health} [])
   (when (some? session) (check-keys! session session-keys [:session]))
+  (let [{:keys [lifetime-ms] {:keys [every-ms]} :renew} session]
+    ;; Only when both are numbers: anything else is the store's or web-base's to refuse.
+    (when (and (integer? lifetime-ms) (integer? every-ms) (<= lifetime-ms every-ms))
+      (fail! "[:session :renew :every-ms] must be shorter than [:session :lifetime-ms]"
+             [:session :renew :every-ms])))
   (when-not (or (false? health) (nil? health) (map? health))
     (fail! ":health must be a map, or false for no probe" [:health]))
   (when (map? health) (check-keys! health (set (keys health-defaults)) [:health]))
@@ -70,6 +77,6 @@
       session
       (assoc :session (merge {:store (session/store handle (merge {:readers {}}
                                                                    (select-keys session [:lifetime-ms :readers])))}
-                             (select-keys session [:cookie-attrs :cookie-name])))
+                             (select-keys session [:cookie-attrs :cookie-name :renew])))
       probe
       (assoc :sessionless {(:path probe) (response/health #(db/ready? handle (:timeout-s probe)))}))))
