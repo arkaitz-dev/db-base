@@ -56,6 +56,13 @@ work**, never from convention. Observed:
     clojure -M:build-test                  # the release guards, against real git
     clojure -T:build jar                   # target/db-base-<version>.jar, src only
     clojure -T:build deploy                # to Clojars with CLOJARS_USERNAME/CLOJARS_PASSWORD; refuses a dirty, unpushed or tagged tree
+    clojure -T:build verify-release        # after deploy: the jar on Clojars, byte for byte against the tag
+
+**Releasing across the set**, in this order, since each consumer names the one before it:
+web-base, then auth-base (its `deps.edn` declares web-base), then db-base, then the
+consumers — db-base's hosts, auth-base's demo, and the template, whose CHANGELOG gets an
+entry. For each library: commit and push, `clojure -T:build deploy` (the user's),
+`clojure -T:build verify-release`, then bump its consumers the same day.
 
 The PostgreSQL suite needs a server and `pg.local.edn` (gitignored) naming it. Observed
 2026-09-26, with Apple's `container` CLI 1.4.1 (Docker is not installed here):
