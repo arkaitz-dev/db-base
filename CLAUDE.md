@@ -27,7 +27,8 @@ the store refusing a boot without its table and `testing/sessions`/`session`; **
 `dev.arkaitz.db-base.native` for GraalVM images (0.2.2 fixes 0.2.1's doubled module
 prefix on GraalVM CE 25.0.4); **0.3.0 on 2026-09-29**, `dev.arkaitz.db-base.web`, this
 library as a web-base plugin (SPEC §10, rule 3 amended by the user); **0.4.0 on
-2026-09-30**, `:libraries` — a library's migrations run beside the host's (SPEC §7). Every public var of `src`
+2026-09-30**, `:libraries` — a library's migrations run beside the host's (SPEC §7); **0.5.0 on
+2026-10-06**, the web plugin passing web-base 0.15.0's `:session :renew` through. Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 

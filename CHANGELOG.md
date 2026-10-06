@@ -7,7 +7,7 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-10-06
 
 - The web plugin passes `:session :renew` through to web-base 0.15.0, which slides a used
   session up to a cap, and refuses an `:every-ms` not shorter than `:lifetime-ms`, naming
