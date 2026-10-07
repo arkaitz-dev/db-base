@@ -15,19 +15,21 @@
       (let [first-boot (db/start (config path))]
         (is (= 2 (:migrations-applied first-boot))
             "the host's own two migrations were found under its classpath prefix and applied")
-        (is (= {"auth_base_migrations" 6} (:library-migrations-applied first-boot))
-            "auth-base's six came from its jar, through :libraries, and were not copied here")
+        (is (= {"auth_base_migrations" 11} (:library-migrations-applied first-boot))
+            "auth-base's eleven came from its jar, through :libraries, and were not copied here")
         (is (= 1 (:session-migrations-applied first-boot))
             (str "and this library's own ran too, counted apart — a handle that added the two"
-                 " would say 9 here, and a host reporting its own schema would be wrong"))
+                 " would say 14 here, and a host reporting its own schema would be wrong"))
         (db/stop first-boot))
-      (is (= [["account"] ["account_generation"] ["auth_base_migrations"] ["db_base_migration_lock"] ["db_base_migrations"]
-              ["db_base_sessions"] ["device"] ["login_attempt"] ["login_challenge"] ["ragtime_migrations"] ["task"]]
+      (is (= [["account"] ["account_generation"] ["account_identifier"] ["auth_base_migrations"] ["db_base_migration_lock"] ["db_base_migrations"]
+              ["db_base_sessions"] ["device"] ["identifier_challenge"] ["login_attempt"] ["login_challenge"] ["ragtime_migrations"] ["task"]]
              (rows path "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"))
           "every table, the host's beside the library's, each run recorded in a control table of its own")
       (is (= [[["001-sessions"]]
               [["001-accounts"] ["002-generations"] ["003-challenges"] ["004-challenge-identifier"]
-               ["005-login-attempts"] ["006-login-attempt-expiry"]]
+               ["005-login-attempts"] ["006-login-attempt-expiry"] ["007-account-identifiers"]
+               ["008-account-identifier-subject"] ["009-account-identifier-backfill"] ["010-identifier-challenges"]
+               ["011-identifier-challenge-subject"]]
               [["004-tasks"] ["005-devices"]]]
              [(rows path "SELECT id FROM db_base_migrations ORDER BY id")
               (rows path "SELECT id FROM auth_base_migrations ORDER BY id")

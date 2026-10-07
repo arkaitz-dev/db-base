@@ -90,7 +90,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.15.0 and auth-base 0.12.0 as releases** (2026-10-06),
+Every host consumes **web-base 0.15.0 and auth-base 0.13.0 as releases** (2026-10-07),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed —
 and installs **both libraries as web-base plugins**: `db-base.web/plugin` for the
 session store and `/health`, `auth-base.web/plugin` for the standard sign-in and
@@ -295,11 +295,11 @@ host that needed them; the third is untouched:
       Store port, and called this project `base-db`. **Both corrected there 2026-09-22**,
       settled by construction rather than argument: the host writes it, `demo-tasks/` is
       the first that has, and "a page of code" turned out to be 48 lines plus 81.
-- [ ] auth-base has no ceremony for attaching a second identifier to an existing
-      subject — log in by email, later add a phone. **Designed with the user 2026-09-27,
-      not built** (auth-base SPEC §15, `f2e2192`): after the first sign-in, a subject
-      with a single way in is asked for another — an alternative email and/or a mobile —
-      attached only once it proves itself by its own challenge.
+- [x] **A second identifier for an existing subject — its first slice, a second email —
+      shipped in auth-base 0.13.0 (2026-10-07)**, designed with the user and a two-stage
+      panel (auth-base SPEC §18). The addresses page and the attach link, a key holding
+      every identifier, the primary notified of each change, and recency to change any;
+      the template uses it (0.3.0). A mobile, which needs an SMS sender, is a later slice.
 - [x] auth-base's `take-challenge!` as one `DELETE … RETURNING`. **Written and measured
       2026-09-22** — in the host, as rule 3 requires. `RETURNING` works on SQLite through
       xerial 3.53.4.0, and single use is proved by *forcing* an interleaving rather than
