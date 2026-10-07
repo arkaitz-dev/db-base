@@ -136,16 +136,30 @@
   []
   (atom nil))
 
-(defn- visit! [app jar method path params]
-  (:response (reset! jar (wt/visit (or @jar (wt/browser app)) method path params))))
+(defn- browser-over
+  "The browser `jar` holds, made over `app` at its first request. A browser keeps the
+  handler it was made with, so a later `app` that is not that one would be ignored in
+  silence — a wrapper meant to change each request, never called, and a test green over
+  nothing (sendmail-base/example FRICTION E7). It is refused instead. To vary a request,
+  pass `opts` — `{:remote-addr \"…\"}` — which web-base's `visit` takes per call."
+  [app jar]
+  (let [b @jar]
+    (cond (nil? b) (wt/browser app)
+          (identical? app (:handler b)) b
+          :else (throw (ex-info "this browser was made over another handler: pass the same app, or vary the request with opts" {})))))
 
-(defn GET [app jar path] (visit! app jar :get path nil))
+(defn- visit! [app jar method path params opts]
+  (:response (reset! jar (wt/visit (browser-over app jar) method path params opts))))
+
+(defn GET
+  ([app jar path] (GET app jar path {}))
+  ([app jar path opts] (visit! app jar :get path nil opts)))
 
 (defn POST
   "A form submission carrying the CSRF token of the last page that had one, as a
   real form would."
-  [app jar path params]
-  (visit! app jar :post path params))
+  ([app jar path params] (POST app jar path params {}))
+  ([app jar path params opts] (visit! app jar :post path params opts)))
 
 (defn landed
   "`[status path]` of where `jar` is after GETting `path`: the status of the page it
@@ -177,7 +191,7 @@
   confirmation page, which spends nothing, and its one button. Answers the POST's
   response, its redirect followed."
   [app jar token]
-  (:response (reset! jar (abt/open-link (or @jar (wt/browser app)) token))))
+  (:response (reset! jar (abt/open-link (browser-over app jar) token))))
 
 (defn sign-in!
   "The whole ceremony as auth-base's `testing/sign-in` walks it, reading the token this
@@ -186,7 +200,7 @@
   naming it — continuing would leave every later assertion about somebody else."
   [app path jar identifier]
   (let [token (volatile! nil)]
-    (reset! jar (abt/sign-in (or @jar (wt/browser app)) identifier
+    (reset! jar (abt/sign-in (browser-over app jar) identifier
                              #(vreset! token (challenge-token path %))))
     @token))
 
@@ -195,8 +209,9 @@
   last page it saw — its redirect NOT followed, as `testing/visit` sends it with
   `{:follow? false}`: a followed redirect hides who answered. The jar still takes what
   the response set."
-  [app jar method path]
-  (:response (reset! jar (wt/visit (or @jar (wt/browser app)) method path nil {:follow? false}))))
+  ([app jar method path] (hop app jar method path {}))
+  ([app jar method path opts]
+   (:response (reset! jar (wt/visit (browser-over app jar) method path nil (assoc opts :follow? false))))))
 
 (defn reclaimed-at-boot
   "Over a database of its own, migrated by a first boot: plants one expired and one live
