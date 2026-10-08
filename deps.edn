@@ -49,7 +49,7 @@
                        ;; The host's, like ring: only `dev.arkaitz.db-base.web` names it,
                        ;; a scan says so, and a consumer that never requires that namespace
                        ;; never loads it (SPEC §10, 2026-09-29).
-                       dev.arkaitz/web-base   {:mvn/version "0.15.0"}}
+                       dev.arkaitz/web-base   {:mvn/version "0.16.0"}}
          ;; H2's brute-force delay is JVM-global: every refused login doubles it and
          ;; the next correct login anywhere sleeps a random part of it
          ;; (org.h2.engine.Engine.validateUserAndPassword), so one test that logs in

@@ -209,6 +209,41 @@
          (is (= [nil nil] [(release!) (release!)]) (str engine ": releasing again is harmless"))
          (finally (release!)))))))
 
+(deftest in-flight-runs-the-first-caller-inside-the-seconds-window
+  ;; Two autocommit check-then-insert callers: with the first run between the second's
+  ;; check and its insert, both insert — the window is the one asked for.
+  (on-each-engine
+   (fn [{:keys [engine cfg handle]}]
+     ;; The second is slow to start, so a first that did not wait for the park would run
+     ;; before the second's check; the first records whether that check had happened.
+     (let [checked (promise)
+           naive (fn [id] (fn [^DataSource ds]
+                            (when (zero? (count (dbt/rows cfg "SELECT id FROM t WHERE name = 'x'")))
+                              (update-through ds (str "INSERT INTO t (id, name) VALUES (" id ", 'x')")))))
+           first! (fn [ds] [(realized? checked) ((naive 8) ds)])
+           second! (fn [ds] (Thread/sleep 200) (let [n (count (dbt/rows cfg "SELECT id FROM t WHERE name = 'x'"))]
+                                                 (deliver checked n)
+                                                 (when (zero? n)
+                                                   (update-through ds "INSERT INTO t (id, name) VALUES (9, 'x')"))))
+           out   (dbt/in-flight handle #(clojure.string/starts-with? % "INSERT") first! second!)]
+       (is (= "INSERT INTO t (id, name) VALUES (9, 'x')" (:arrived out)) (str engine ": the second parked at its insert, after its check"))
+       (is (= :released (:exit out)) (str engine ": released, so the window was this one"))
+       (is (= [[true 1] 1] [(:first out) (:second out)])
+           (str engine ": the first ran after the second's check, and both inserted: " (pr-str [(:first out) (:second out)])))
+       (is (= [[8] [9]] (dbt/rows cfg "SELECT id FROM t WHERE name = 'x' ORDER BY id")) (str engine ": two rows where one was meant"))))))
+
+(deftest in-flight-ends-the-park-when-the-first-caller-throws
+  (on-each-engine
+   (fn [{:keys [engine handle]}]
+     (let [second-done (promise)
+           thrown (try (dbt/in-flight handle #(clojure.string/starts-with? % "DELETE")
+                                      (fn [_] (throw (ex-info "first failed" {})))
+                                      (fn [^DataSource ds] (deliver second-done (update-through ds "DELETE FROM t WHERE id = 1")))
+                                      10000)
+                       (catch clojure.lang.ExceptionInfo e (ex-message e)))]
+       (is (= "first failed" thrown) (str engine ": the first's exception leaves"))
+       (is (= 1 (deref second-done 5000 ::hang)) (str engine ": and the second was released, never left to its guard"))))))
+
 (deftest a-park-nobody-releases-ends-by-the-guard-and-the-statement-still-runs
   ;; Alone, this would pass over an `await` that returned at once; the test above is the
   ;; one that proves a park waits (`exit` unrealized after the second caller returned).

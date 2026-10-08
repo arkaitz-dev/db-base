@@ -230,6 +230,20 @@ statement would be the first step of a query builder, which `SPEC.md` §9 forbid
 It is for a write in autocommit. Inside a transaction you opened, use a conditional write
 instead — see the recipes below.
 
+**When the right answer is "the write lost"** — a second click whose first won — the look
+must still answer something truthy, or the write's exception leaves. Answer a sentinel and
+turn it into the outcome after:
+
+```clojure
+(let [won (collision/arbitrate! #(do (insert-token! ds subject hash) token)
+                                #(when (some? (hash-of ds subject)) ::lost))]
+  (when (string? won) won))   ; nil: another click's token is the one stored
+```
+
+The look asks what makes the outcome true — here, that another row is there now — and
+never just "is anything there": a write that failed for any other reason must still leave
+as the error it is.
+
 ## In a host's tests
 
 `dev.arkaitz.db-base.testing` is for your test suite, never a request path.
@@ -256,6 +270,13 @@ instead — see the recipes below.
   a broken implementation every time. `:exit` says whether the test ended the park or
   the guard did — assert it. Stop the handle you passed in, not `:handle`; a pool of one
   deadlocks.
+
+- **`in-flight`** builds the whole interleaving: `(dbt/in-flight db-handle accepts? first!
+  second!)` runs `second!` on a parked handle, `first!` to the end in its window, then
+  lets the second go, and answers `{:arrived :exit :first :second}` — every wait bounded,
+  the park ended even when `first!` throws (since 0.6.0). It is the race a test of single
+  use, of no overlap or of exactly once needs; keep a naive version of the code beside it
+  as the control that must let both callers through.
 
 - **`sessions` and `session`** read §8's table the same way — every row ordered by id,
   or one by id, as `{:id :data :expires-at}` with `:data` the EDN text as written — so a

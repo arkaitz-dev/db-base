@@ -193,3 +193,23 @@
      :arrived  arrived
      :release! (fn [] (.countDown released))
      :exit     exit}))
+
+(defn in-flight
+  "Two callers of `handle` in flight, the second suspended inside the first's window:
+  `second!` runs on a handle that parks it at its first statement `accepts?` answers for
+  (`parking`), then `first!` runs to the end on `handle` itself, then the second is let
+  go. Answers `{:arrived sql :exit … :first … :second …}` — `:exit` is the one to assert,
+  as for `parking` — every wait bounded by `guard-ms` (10 s unless given), and the park
+  ended even when `first!` throws, which then leaves this function. `first!` and
+  `second!` are functions of a datasource. The race a test of single use, of no overlap,
+  of exactly once builds: five hosts wrote this by hand (booking FRICTION B24)."
+  ([handle accepts? first! second!] (in-flight handle accepts? first! second! 10000))
+  ([handle accepts? first! second! guard-ms]
+   (let [{:keys [arrived release! exit] parked :handle} (parking handle accepts? guard-ms)
+         second-run (future (second! (:datasource parked)))
+         parked-sql (deref arrived guard-ms nil)
+         first-run  (try (first! (:datasource handle)) (finally (release!)))]
+     {:arrived parked-sql
+      :exit    (deref exit guard-ms :never)
+      :first   first-run
+      :second  (deref second-run guard-ms :hung)})))

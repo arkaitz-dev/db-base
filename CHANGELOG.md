@@ -7,6 +7,15 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.6.0 — 2026-10-08
+
+From what building `booking`, a third application, cost (its `FRICTION.md`).
+
+- `testing/in-flight`: `parking` with the other caller run in its window, every wait
+  bounded and the park ended when the first caller throws — the interleaving five hosts
+  had written by hand for single use, no overlap and exactly once.
+- The README shows how `arbitrate!` answers "the write lost" with a sentinel.
+
 ## 0.5.0 — 2026-10-06
 
 - The web plugin passes `:session :renew` through to web-base 0.15.0, which slides a used

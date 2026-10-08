@@ -1151,10 +1151,12 @@
     ;; second var here is an amendment of SPEC §10 first.
     dev.arkaitz.db-base.collision      {arbitrate! "SPEC §10: a refused write answered by a look, never by SQLSTATE"}
     ;; 2026-09-25. For a host's tests: what demo-tasks wrote by hand, minus anything that
-    ;; touches a file (§5) or orchestrates a race, which each host builds differently.
+    ;; touches a file (§5). A race was left out then as each host's own; 2026-10-08 it
+    ;; came in as `in-flight`, after five hosts had written the same one (booking B24).
     dev.arkaitz.db-base.testing        {rows    "SPEC §10: a reader that is not the code under test, Clob read as text"
                                         one     "SPEC §10: `rows` cut to one value"
                                         parking "SPEC §10: one caller suspended between its statements, and how it ended"
+                                        in-flight "SPEC §10: `parking` with the other caller run in its window, every wait bounded"
                                         ;; 2026-09-28: the table's owner reads it, so a host's
                                         ;; tests stop querying it by hand.
                                         sessions "SPEC §10: every row of §8's table, through the test's own connection"
