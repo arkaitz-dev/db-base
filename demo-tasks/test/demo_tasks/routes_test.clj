@@ -4,9 +4,10 @@
   Read from the tree the running system built its handler from, never from one this
   test builds, and compared with literal sets: a route added later answers here until
   somebody decides whether it is private. The structural half reads the gate each
-  compiled endpoint carries — the route's data as reitit merged it from its parents,
-  and the method's own map over that — and requires it to be `wb/subject-present?`
-  itself, since a child's own gate replaces the group's. The behavioural half watches
+  compiled endpoint carries — the route's data merged from its parents as web-base
+  merges it, and the method's own map over that — and requires it to be
+  `wb/subject-present?` itself: a child's own gate composes with the group's into a
+  gate identical to neither, which reds here until it is declared. The behavioural half watches
   the FIRST hop, because a followed redirect hides who answered, and recognises the
   gate by the headers only its refusal carries: a handler that redirects to the login
   page by itself, as the revoke path does for a visitor with no subject, sends neither."
@@ -36,7 +37,7 @@
   its gate read from the endpoint of such a method."
   [tree]
   (into {}
-        (for [[path data result] (r/compiled-routes (ring/router tree))]
+        (for [[path data result] (r/compiled-routes (wt/router tree))]
           [path (cond-> (into {}
                               (for [method (filter ring/http-methods (keys data))]
                                 [method (get-in result [method :data :wb/gate])]))
