@@ -16,6 +16,8 @@
             [dev.arkaitz.db-base.collision :as collision]
             [dev.arkaitz.db-base.session :as session]
             [next.jdbc :as jdbc]
+            [ragtime.next-jdbc :as ragtime-jdbc]
+            [ragtime.protocols :as ragtime-protocols]
             [ring.middleware.session.store :as store])
   (:import [java.io FileNotFoundException]
            [java.sql DriverManager SQLException]))
@@ -74,6 +76,30 @@
     (is (= {:migrations-applied 1} (boot config "plus-one")) "and one more applies one")
     (is (= [["001-a"] ["002-b"] ["003-c"] ["004-d"]] (rows config "SELECT id FROM ragtime_migrations ORDER BY id")))
     (is (= [] (rows config "SELECT id FROM db_base_migration_lock")) "every boot gave its lock back")))
+
+(deftest a-control-table-in-another-schema-is-not-this-runs
+  ;; helpdesk's H21: ragtime's check sees every schema, its SELECT only the search path.
+  (with-schema [config]
+    (let [other (str "o_" (str/replace (str (random-uuid)) "-" "_"))]
+      (admin! (str "CREATE SCHEMA " other))
+      (try
+        (admin! (str "CREATE TABLE " other ".ragtime_migrations (id varchar(255) primary key, created_at varchar(32))"))
+        (is (= "42P01" (try (ragtime-protocols/applied-migration-ids
+                             (ragtime-jdbc/sql-database (jdbc/get-datasource {:jdbcUrl (:jdbc-url config) :user (:user config)
+                                                                              :password (:password config)})
+                                                        {:migrations-table "ragtime_migrations"}))
+                            :read
+                            (catch SQLException e (.getSQLState e))))
+            "witness: ragtime alone takes the other schema's table for this one, and its read fails")
+        (is (= [{:migrations-applied 3}
+                [["001-a"] ["002-b"] ["003-c"]] [[0]]]
+               [(boot config "three") (rows config "SELECT id FROM ragtime_migrations ORDER BY id")
+                (rows config (str "SELECT COUNT(*) FROM " other ".ragtime_migrations"))])
+            "the boot applies three, records them in this schema, and writes nothing in the other")
+        (is (= [{:migrations-applied 0} []]
+               [(boot config "three") (rows config "SELECT id FROM db_base_migration_lock")])
+            "and a second boot applies nothing and leaves no lock row")
+        (finally (admin! (str "DROP SCHEMA " other " CASCADE")))))))
 
 (deftest two-boots-that-overlap-migrate-once
   (with-schema [config]

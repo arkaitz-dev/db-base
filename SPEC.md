@@ -442,7 +442,11 @@ and given back with a `DELETE` of that holder's row, in ANSI SQL, with no transa
 open. A boot takes it only when the control table shows something pending — read with a
 `SELECT` of this library's, because ragtime's own read creates the table, which must
 happen under the lock — and the run reads the control table again under the lock before
-it applies anything. A control table that is not there, or that this `SELECT` cannot read
+it applies anything. Under the lock the table is also created by this library, with
+ragtime's own columns, before ragtime is asked anything: ragtime's check for it looks
+in every schema the connection can see, so a table of that name in another one stops it
+creating its own, and its unqualified read then fails (helpdesk's H21, measured on H2
+and PostgreSQL 2026-10-09). A control table that is not there, or that this `SELECT` cannot read
 at all, is not an answer: such a boot takes the lock and lets the run decide. A history
 that disagrees with the source is refused from that same read, **before** the lock, so a
 boot with nothing to apply reports the disagreement rather than a lock it never needed.

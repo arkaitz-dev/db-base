@@ -329,6 +329,27 @@
           (str engine ": no migration ran, and the check that says so sees the table that is there"))
       (is (= [] (ts/lock-rows url)) (str engine ": and the lock is given back")))))
 
+(deftest a-control-table-that-cannot-be-created-stops-the-boot-naming-it-and-gives-the-lock-back
+  (doseq [[engine url] (ts/engines)]
+    (ts/execute! url "CREATE TABLE ragtime_migrations (id varchar(255) primary key, created_at varchar(32))")
+    (let [probes   (atom 0)
+          able-var (ns-resolve 'dev.arkaitz.db-base 'readable?)
+          honest   @able-var]
+      ;; Every probe of the control table lies, so its CREATE meets a table that is there
+      ;; and the re-read still says it is not: the creation refused, as an engine that will
+      ;; not take it does. The var is put back from this thread.
+      (alter-var-root able-var
+                      (constantly (fn [ds table]
+                                    (if (= "ragtime_migrations" table) (do (swap! probes inc) false) (honest ds table)))))
+      (let [e (try (bounded #(ts/thrown (fn [] (db/start (ts/config url "three")))))
+                   (finally (alter-var-root able-var (constantly honest))))]
+        (is (= 2 @probes) (str engine ": witness: probed, created, probed again"))
+        (is (= (refused "three" "the control table ragtime_migrations could not be read or created") (ts/pair e))
+            (str engine ": the refusal names the table"))
+        (is (instance? SQLException (ex-cause e)) (str engine ": the engine's refusal of the CREATE is the cause: " (pr-str (ex-cause e))))
+        (is (= [[] false] [(ts/lock-rows url) (contains? (ts/tables url) "m_probe")])
+            (str engine ": the lock is given back, and no migration ran"))))))
+
 (deftest an-up-split-across-numbered-files-is-one-migration-and-a-down-beside-it-is-accepted
   (is (some? (io/resource "db-base-test/numbered/001-a.down.sql"))
       "precondition: a down file sits beside them, so accepting it is a claim the file check can break")
@@ -501,12 +522,16 @@
     (let [probes   (atom 0)
           able-var (ns-resolve 'dev.arkaitz.db-base 'readable?)
           honest   @able-var]
-      ;; The first probe lies, so the CREATE meets a table that is already there — what the
-      ;; loser of a race between two cold boots sees. The second probe, an honest one,
-      ;; absorbs it. The var is put back from this thread, so a boot that hung would not
-      ;; leave the lie behind for the rest of the suite.
+      ;; The lock table's first probe lies, so the CREATE meets a table that is already
+      ;; there — what the loser of a race between two cold boots sees. The second probe,
+      ;; an honest one, absorbs it. Only the lock table's probes are counted: the control
+      ;; table is probed the same way, later. The var is put back from this thread, so a
+      ;; boot that hung would not leave the lie behind for the rest of the suite.
       (alter-var-root able-var
-                      (constantly (fn [ds table] (if (= 1 (swap! probes inc)) false (honest ds table)))))
+                      (constantly (fn [ds table]
+                                    (if (and (= "db_base_migration_lock" table) (= 1 (swap! probes inc)))
+                                      false
+                                      (honest ds table)))))
       (try (is (= {:migrations-applied 3} (bounded #(ts/boot (ts/config url "three"))))
                (str engine ": the create that loses the race does not stop the boot"))
            (finally (alter-var-root able-var (constantly honest))))
@@ -753,6 +778,63 @@
     (is (= {:library-migrations-applied {"lib_accounts_migrations" 0} :migrations-applied 0}
            (ts/boot (with-library url "lib-host")))
         (str engine ": a second boot applies nothing in either"))))
+
+;; --- a control table in another schema (helpdesk's H21) -------------------------
+;; H2 alone: SQLite's other schemas — ATTACH, TEMP — belong to one connection, so no table
+;; the pool's connections can see sits in a schema they do not resolve to.
+
+(def ^:private control-tables ["ragtime_migrations" "db_base_migrations" "lib_accounts_migrations"])
+
+(defn- ragtime-read
+  "What ragtime's own read of `table` answers over `url`: the ids, or the SQLSTATE it
+  threw."
+  [url table]
+  (try [:ok (vec (ragtime-protocols/applied-migration-ids
+                  (ragtime-jdbc/sql-database (jdbc/get-datasource {:jdbcUrl url :user ts/user-sentinel
+                                                                    :password ts/password-sentinel})
+                                             {:migrations-table table})))]
+       (catch SQLException e [:threw (.getSQLState e)])))
+
+(defn- other-counts [url]
+  (first (ts/query url (str "SELECT " (str/join ", " (map #(str "(SELECT COUNT(*) FROM other." % ")") control-tables))))))
+
+(deftest a-control-table-in-another-schema-is-not-this-runs-and-each-run-makes-its-own
+  (let [url (ts/h2-memory-url "h21-shadow")
+        cfg (assoc (with-library url "lib-host") :sessions {:lock-wait-ms 1000})]
+    (ts/execute! url "CREATE SCHEMA other")
+    (doseq [t control-tables]
+      (ts/execute! url (str "CREATE TABLE other." t " (id varchar(255) primary key, created_at varchar(32))")))
+    ;; The setup is the bug: ragtime, alone, takes the other schema's table for this one.
+    (is (= (repeat 3 [:threw "42S02"]) (map #(ragtime-read url %) control-tables))
+        "witness: ragtime's own read finds the name in another schema, creates nothing, and its SELECT fails")
+    (is (= {:session-migrations-applied 1 :session-data-max 4000
+            :library-migrations-applied {"lib_accounts_migrations" 1} :migrations-applied 1}
+           (ts/boot cfg))
+        "the boot applies every run's migrations")
+    (is (= [[["001-sessions"]] [["001-accounts"]] [["001-accounts"]]]
+           (map #(ts/query url (str "SELECT id FROM PUBLIC." % " ORDER BY id"))
+                ["db_base_migrations" "lib_accounts_migrations" "ragtime_migrations"]))
+        "each run recorded in a table of the current schema")
+    (is (= [0 0 0] (other-counts url)) "and the other schema's tables were never written")
+    (is (= [[:ok ["001-accounts"]] [:ok ["001-sessions"]] [:ok ["001-accounts"]]] (map #(ragtime-read url %) control-tables))
+        "ragtime now reads the table db-base made")
+    (is (= [{:session-migrations-applied 0 :session-data-max 4000
+             :library-migrations-applied {"lib_accounts_migrations" 0} :migrations-applied 0}
+            [] [0 0 0]]
+           [(ts/boot cfg) (ts/lock-rows url) (other-counts url)])
+        "a second boot applies nothing, leaves no lock row, and still writes nothing elsewhere")))
+
+(deftest the-control-table-db-base-makes-is-the-one-ragtime-would-make
+  (let [columns (fn [url] (ts/query url (str "SELECT column_name, data_type, character_maximum_length, is_nullable"
+                                             " FROM information_schema.columns WHERE table_schema = 'PUBLIC'"
+                                             " AND table_name = 'RAGTIME_MIGRATIONS' ORDER BY ordinal_position")))
+        by-ragtime (ts/h2-memory-url "h21-shape-ragtime")
+        by-db-base (ts/h2-memory-url "h21-shape-db-base")]
+    (is (= [:ok []] (ragtime-read by-ragtime "ragtime_migrations")) "witness: ragtime made its table")
+    (is (= {:migrations-applied 3} (ts/boot (ts/config by-db-base "three"))) "witness: db-base made its own")
+    (is (= 2 (count (columns by-ragtime))) "witness: the shape was read")
+    (is (= (columns by-ragtime) (columns by-db-base))
+        "column for column — name, type, length, nullability — the two tables agree")))
 
 (deftest a-library-prefix-that-serves-nothing-is-refused-before-any-pool-naming-its-entry
   (let [url    (ts/h2-memory-url "lib-empty")

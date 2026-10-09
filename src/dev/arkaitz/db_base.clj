@@ -442,7 +442,7 @@
          (loop [acc #{}] (if (.next rows) (recur (conj acc (.getString rows 1))) acc)))
        (catch SQLException _ nil)))
 
-(defn- lock-table-ready!
+(defn- table-ready!
   "Probe, create, probe again. The existence clause some engines offer for `CREATE TABLE`
   is not ANSI — Derby rejects it, and §3's scan will not let src spell it, here or in a
   docstring — and two boots can race for the creation, which this absorbed 200 times out
@@ -454,12 +454,25 @@
   answers `false` for a table that is not there, which the function reads as nothing
   found and rethrows. `take-lock-row!` is the same event with the opposite meaning — a
   lost race there means wait, not done — and so does not use it."
-  [ds]
-  (when-not (readable? ds lock-table)
+  [ds table columns]
+  (when-not (readable? ds table)
     (collision/arbitrate!
-     #(update! ds (str "CREATE TABLE " lock-table " (id VARCHAR(64) NOT NULL PRIMARY KEY,"
-                       " holder VARCHAR(36) NOT NULL, acquired_at BIGINT NOT NULL)"))
-     #(readable? ds lock-table))))
+     #(update! ds (str "CREATE TABLE " table " (" columns ")"))
+     #(readable? ds table))))
+
+(defn- lock-table-ready! [ds]
+  (table-ready! ds lock-table (str "id VARCHAR(64) NOT NULL PRIMARY KEY, holder VARCHAR(36) NOT NULL,"
+                                   " acquired_at BIGINT NOT NULL")))
+
+(defn- control-table-ready!
+  "The control table, made here and not by ragtime, whose check looks for the name in
+  every schema the connection can see: a table of that name in another schema is taken
+  for this one, nothing is created, and its read then fails where the unqualified name
+  resolves (measured on H2 and PostgreSQL, helpdesk's H21). The probe here is the same
+  unqualified `SELECT` ragtime then runs. The columns are ragtime's own, spelt as it
+  spells them, so a table either of the two made is the one the other expects."
+  [ds run]
+  (table-ready! ds (:table run) "id varchar(255) primary key, created_at varchar(32)"))
 
 (defn- lock-held-elsewhere [run holder acquired-at]
   (let [wait-ms (:wait-ms run)]
@@ -553,7 +566,8 @@
                                              " could not be read or created")
                                     nil %)
         pending (plan-migrations run
-                                 (try (vec (ragtime-protocols/applied-migration-ids store))
+                                 (try (control-table-ready! ds run)
+                                      (vec (ragtime-protocols/applied-migration-ids store))
                                       (catch Exception e (throw (unread e))))
                                  migrations)
         current (atom nil)
