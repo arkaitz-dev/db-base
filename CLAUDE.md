@@ -28,7 +28,7 @@ the store refusing a boot without its table and `testing/sessions`/`session`; **
 prefix on GraalVM CE 25.0.4); **0.3.0 on 2026-09-29**, `dev.arkaitz.db-base.web`, this
 library as a web-base plugin (SPEC §10, rule 3 amended by the user); **0.4.0 on
 2026-09-30**, `:libraries` — a library's migrations run beside the host's (SPEC §7); **0.5.0 on
-2026-10-06**, the web plugin passing web-base 0.15.0's `:session :renew` through. **0.6.0 on 2026-10-08**, `testing/in-flight` (booking B24). Every public var of `src`
+2026-10-06**, the web plugin passing web-base 0.15.0's `:session :renew` through. **0.6.0 on 2026-10-08**, `testing/in-flight` (booking B24). **0.7.0 on 2026-10-09**, the control table created here, blind to other schemas (helpdesk H21). Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
@@ -90,7 +90,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.16.0 and auth-base 0.15.0 as releases** (2026-10-08),
+Every host consumes **web-base 0.17.0 and auth-base 0.16.0 as releases** (2026-10-09),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed —
 and installs **both libraries as web-base plugins**: `db-base.web/plugin` for the
 session store and `/health`, `auth-base.web/plugin` for the standard sign-in and

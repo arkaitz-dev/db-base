@@ -10,7 +10,7 @@ with the measurements behind each one; this file is only how to use it.
 ## Depending on it
 
 ```clojure
-dev.arkaitz/db-base {:mvn/version "0.6.0"}
+dev.arkaitz/db-base {:mvn/version "0.7.0"}
 ```
 
 On Clojars since 2026-09-26. The engine is yours and so is its driver — declare

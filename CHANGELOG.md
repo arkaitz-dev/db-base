@@ -7,6 +7,18 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.7.0 — 2026-10-09
+
+From what building `helpdesk`, a fourth application, cost (its `FRICTION.md`).
+
+- A table named like a control table in another schema no longer stops the boot (H21).
+  ragtime looks for its control table in every schema the connection can see, so a
+  `ragtime_migrations` elsewhere stopped it creating this schema's, and its read then
+  failed. The control table is now created by this library, under the lock, with
+  ragtime's own columns.
+- The README's recipes gain five measured on H2, SQLite and PostgreSQL: bytes as `BYTEA`,
+  update-or-create, a tie-free order, case-blind search, and `ORDER BY` on text.
+
 ## 0.6.0 — 2026-10-08
 
 From what building `booking`, a third application, cost (its `FRICTION.md`).
