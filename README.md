@@ -323,6 +323,36 @@ Use a temporary file.
   refuses `CLOB`, HSQLDB and Derby refuse `TEXT` (measured 2026-09-26) — so either bound it
   or give each engine its own migration, as this library's dialects do. The suite's own dialect table, in
   `test/dev/arkaitz/db_base/dialect_test.clj`, says which engine refuses which form.
+- **Bytes are `BYTEA`.** It is the one binary type name PostgreSQL, H2 and SQLite all
+  take: PostgreSQL refuses `BLOB`, `VARBINARY` and `BINARY VARYING`, and 256 bytes of every
+  value made the round trip through `BYTEA` on all three (measured 2026-10-09). SQLite is
+  not lucky there: an unknown type name gets NUMERIC affinity, and SQLite never converts a
+  blob, whatever the column's affinity.
+- **Update-or-create is yours, and it is three statements**: `UPDATE`; if it changed no
+  row, `INSERT`; if that is refused because another writer inserted first, the `UPDATE`
+  once more, rethrowing the insert's exception when that too changes nothing. It is right
+  for a preference — the later save wins — and is exactly what §8 refuses for a session,
+  where it would bring back a row somebody deleted. `arbitrate!` is not the tool: its
+  fallback only reads.
+- **An order nobody can tie is a column you fill.** Rows written in the same millisecond
+  tie on a timestamp, and a random id breaks the tie at random — a test that fails half
+  the time, a thread whose messages swap. Engines spell a sequence differently
+  (`BIGSERIAL`, `AUTOINCREMENT`, `IDENTITY`), so a portable position is the parent's
+  `MAX(position) + 1`, written inside the transaction under a unique key on
+  `(parent, position)` and retried when another writer took that number.
+- **A case-blind search is a column folded in Clojure.** `LOWER('ÑANDÚ')` is `ñandú` on
+  PostgreSQL and H2 and `ÑandÚ` on SQLite, which folds ASCII alone (measured 2026-10-09).
+  Keep a second column folded once with `(.toLowerCase s Locale/ROOT)` — `str/lower-case`
+  folds with the JVM's own locale, which under `tr_TR` turns `I` into a dotless `ı` — and
+  search it with `LIKE ? ESCAPE '\'` over the folded query. A column added to a table that
+  already has rows cannot be filled by its migration, since SQL cannot fold as Clojure
+  does: fill it from the host at boot, after `start`, for the rows where it is null.
+- **`ORDER BY` a text column is a different order on each engine.** SQLite and H2 compare
+  bytes; PostgreSQL uses the database's collation, which in the usual `en_US.UTF-8`
+  ignores punctuation and case: `a-fail@`, `admin@`, `ana`, `Zoe` come back as `Zoe`,
+  `a-fail@`, `admin@`, `ana` on SQLite and as `admin@`, `a-fail@`, `ana`, `Zoe` on
+  PostgreSQL (measured 2026-10-09). A list whose order a test pins is sorted in Clojure,
+  or by a key whose order no collation changes.
 
 ## Running it in production
 
