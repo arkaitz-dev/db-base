@@ -238,6 +238,36 @@
           (finally (ig/halt! system))))
       (finally (delete-db! path)))))
 
+(defn- boot-over
+  "The host booted over `path` with Integrant, as these hosts' tests boot it: `:booted`
+  (halted again at once), or the exception, the partial system it carries halted —
+  Integrant does not halt what it built before the key that threw."
+  [path]
+  (try (ig/halt! (ig/init (host-config path) [:dev.arkaitz.web-base/handler]))
+       :booted
+       (catch clojure.lang.ExceptionInfo e
+         (some-> (:system (ex-data e)) ig/halt!)
+         e)))
+
+(defn boot-with-a-decomposed-identifier
+  "What booting answers over a database whose `account` holds an identifier stored
+  decomposed (NFD) — how a row from before auth-base 0.17.0 could look — planted through
+  a connection of the test's own after migrating: `{:stored … :refused … :control …}`,
+  the last the same database booted again once that row is gone."
+  []
+  (let [path (temp-db-path)
+        nfd  "ana@n\u0303andu\u0301.es"]
+    (try
+      (let [handle (db/start (config path))]
+        (try (jdbc/execute! (:datasource handle)
+                            ["INSERT INTO account (subject, identifier, created_at) VALUES (?, ?, ?)" "s-nfd" nfd 1])
+             (finally (db/stop handle))))
+      (let [stored  (rows path "SELECT identifier FROM account")
+            refused (boot-over path)]
+        (jdbc/execute! (datasource path) ["DELETE FROM account WHERE subject = ?" "s-nfd"])
+        {:stored stored :nfd nfd :refused refused :control (boot-over path)})
+      (finally (delete-db! path)))))
+
 (defn with-system*
   "The whole system up over a temporary database, handed over whole — for a test
   that reads what the handler was built from — and down however it ends."

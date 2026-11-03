@@ -151,3 +151,17 @@
                                      "ada@example.test"))
               (str "the address, posted where the form says under the name it says, issued one link — form: "
                    [action field] ", answered " (:status answer) " at " (:path @jar))))))))
+
+(deftest an-identifier-stored-outside-the-normal-form-refuses-the-boot
+  ;; An account nobody reaches would hand its owner a new one in silence (auth-base 0.17.0).
+  (let [{:keys [stored nfd refused control]} (support/boot-with-a-decomposed-identifier)
+        causes (take-while some? (iterate ex-cause refused))]
+    (is (and (= [[nfd]] stored) (not= nfd "ana@\u00f1and\u00fa.es"))
+        "witness: the decomposed row is stored, and it is not the composed spelling")
+    (is (= :demo-events/web-config (:key (ex-data refused))) (str "the boot refuses at the key that checks it: " (pr-str refused)))
+    (is (some #(= (str "auth-base jdbc: stored identifiers are not in this ceremony's normal form — 1 in account;"
+                       " re-store each through auth/normalise, deciding by hand where two become one")
+                  (ex-message %))
+              causes)
+        (str "with auth-base's refusal as its cause: " (pr-str (map ex-message causes))))
+    (is (= :booted control) "control: without that row the same database boots")))
