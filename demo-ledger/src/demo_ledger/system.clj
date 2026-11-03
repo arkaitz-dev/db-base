@@ -23,6 +23,9 @@
    :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})
 
 (defmethod ig/init-key :demo-ledger/web-config [_ {:keys [db ceremony session-lifetime-ms secure?]}]
+  ;; Before anything serves: an identifier stored outside the ceremony's normal form is
+  ;; one nobody signs in as (auth-base 0.17.0).
+  (auth-jdbc/check-identifiers! (:datasource db) ceremony)
   {:routes  (routes/routes db ceremony)
    :plugins [(db-web/plugin db {:session {:lifetime-ms  session-lifetime-ms
                                           :cookie-attrs {:secure secure? :max-age (quot session-lifetime-ms 1000)}}})

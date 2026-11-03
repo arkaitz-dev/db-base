@@ -50,6 +50,9 @@
    :on-unknown (fn [identifier] (auth-jdbc/register! (:datasource db) identifier))})
 
 (defmethod ig/init-key :demo-tasks/web-config [_ {:keys [db ceremony session-lifetime-ms session-renew secure?]}]
+  ;; Before anything serves: an identifier stored outside the ceremony's normal form is
+  ;; one nobody signs in as (auth-base 0.17.0).
+  (auth-jdbc/check-identifiers! (:datasource db) ceremony)
   ;; The store is built once, by db-base's plugin, and handed to two places: to web-base
   ;; as the plugin's `:session`, and to the routes, which need it to end one session by
   ;; id. **That is the whole of what db-base §12 said could not be done without a
