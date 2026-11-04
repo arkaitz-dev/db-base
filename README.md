@@ -317,6 +317,17 @@ Use a temporary file.
 - **Counters and epoch milliseconds are `BIGINT`, never `NUMERIC`.** A `NUMERIC` column
   comes back as a `BigDecimal`, and `(= 0M 0)` is false in Clojure — so a revocation
   generation compared with `=` silently never matches.
+- **A `BOOLEAN` reads as 1 or 0 on SQLite, and 0 is truthy.** PostgreSQL's driver
+  answers a `Boolean`; xerial answers an `Integer` for the column and for a comparison
+  (`SELECT (n > 100)`), measured 2026-11-04 — so `(if (:active row) …)` is true for every
+  row on the engine you develop on. Read it through `(value/bool (:active row))`
+  (`dev.arkaitz.db-base.value`, since 0.8.0), which refuses anything but a boolean, 1 or
+  0. Writing needs nothing: both take a bound Clojure boolean and `TRUE`.
+- **An aggregate's type is the engine's.** `SUM` over a `BIGINT` is a `BigDecimal` on
+  PostgreSQL (`NUMERIC`) and an `Integer` on SQLite, and `(= 470M 470)` is false:
+  `CAST(SUM(x) AS BIGINT)` answers a `Long` on PostgreSQL and an `Integer` on SQLite,
+  which `=` takes as equal, and nil over no rows on both (measured 2026-11-04).
+  `COUNT(*)` and `MAX` over a `BIGINT` need no cast.
 - **If your schema must run on more than one engine, write it the way §8's table is
   written**: `VARCHAR` with a bound you enforce yourself, `BIGINT`, and no clause one
   family takes and another refuses. Long text has no type every engine takes — PostgreSQL
