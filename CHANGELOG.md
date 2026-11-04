@@ -7,6 +7,17 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.8.0 — 2026-11-05
+
+From what building `shop`, a fifth application, cost (its `FRICTION.md`).
+
+- `dev.arkaitz.db-base.value/bool`: a BOOLEAN column's value, or a comparison's, as a
+  boolean on every engine (S1). SQLite's driver answers 1 or 0, and 0 is truthy, so a
+  column read as it comes is true for every row on the engine a host develops on.
+  Anything but a boolean, 1 or 0 is refused by name. SPEC §10 amended.
+- The README's recipes gain two, measured on SQLite and PostgreSQL: BOOLEAN as 1/0, and
+  an aggregate's type (`CAST(SUM(x) AS BIGINT)`, S8).
+
 ## 0.7.0 — 2026-10-09
 
 From what building `helpdesk`, a fourth application, cost (its `FRICTION.md`).
