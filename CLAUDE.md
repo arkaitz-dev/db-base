@@ -222,8 +222,8 @@ run silently) and Flyway (a failure on a non-transactional-DDL engine needs `rep
       at up to 640 — a 500 on PostgreSQL, stored whole on SQLite. The hosts' own invitation
       form was fixed the right way (bound after normalise); this one is auth-base's, and
       needs a release. Low severity: it takes a crafted address and fails loud.
-- [ ] **Two auth-base threads this host opened and did not close**, both needing to be
-      raised there rather than fixed from here:
+- [x] **Two auth-base threads this host opened** — both raised there and closed by
+      auth-base releases:
       - ~~**A magic link fetched by a corporate link scanner is consumed before the human
         clicks it.**~~ — **closed by auth-base 0.8.0 (`950d3ed`, 2026-09-29)**: opening a
         link renders a confirmation page whose POST, behind the host's CSRF, redeems; no
@@ -288,8 +288,8 @@ Two belong to **web-base**, found by building the demo against it and measured
       revocation means. The panel's side finding became web-base 0.6.0's error
       boundary.
 
-Threads that belong to **auth-base**. Two were closed on 2026-09-22 by building the
-host that needed them; the third is untouched:
+Threads that belong to **auth-base**, all closed — the first and third on 2026-09-22 by
+building the host that needed them, the second by auth-base 0.13.0:
 
 - [x] `auth-base/SPEC.md` contradicted §8 about who ships the JDBC implementation of its
       Store port, and called this project `base-db`. **Both corrected there 2026-09-22**,
@@ -316,8 +316,9 @@ host that needed them; the third is untouched:
       server log gives.
 
 Two more were opened there in the same work and are recorded above under the second
-consumer: the link scanner that burns a magic link before its recipient clicks it, and
-the obligation that `:on-unknown`'s return must equal what `subject-for` answers after.
+consumer, both since closed: the link scanner that burns a magic link before its
+recipient clicks it, and the obligation that `:on-unknown`'s return must equal what
+`subject-for` answers after.
 
 Done, recorded so it is not repeated: the upsert trap of §8 was reported upstream at
 `luminus-framework/jdbc-ring-session` issue 25.
