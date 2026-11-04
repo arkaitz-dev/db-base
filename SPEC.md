@@ -767,6 +767,17 @@ implementations of published third-party ports whose tables are its own. Since
   layer, which is why the plugin is a namespace and not the library. Never auth-base:
   rule 3 of CLAUDE.md stands for every sibling but the root.
 
+- **`dev.arkaitz.db-base.value/bool`** (amended 2026-11-04, by the user's directive
+  that general code every host writes is offered by the set: "todo código generalista
+  que sea muy probable tener que reutilizar en otros proyectos debería ser algo que …
+  db-base … pudiera ofrecer de forma sencilla") — a pure coercion of a value the two
+  engines answer differently: a BOOLEAN reads as a Boolean on PostgreSQL and as 1 or 0
+  on SQLite, where 0 is truthy (measured in the shop, the set's third study, FRICTION
+  S1). It takes a value a row already holds, never a statement, so §9's first entry
+  cannot grow from it; the namespace holds such coercions and nothing else. An aggregate
+  is not one of them: `CAST(SUM(x) AS BIGINT)` makes it a whole number on both engines
+  at the source (measured, README).
+
 **Out**: everything in §9, the engine, the schema, the SQL, and the driver. **A function
 here that accepts a statement from the host is §9's first entry, whatever it is
 called** — which is the line `arbitrate!` was shaped to stay behind, and the reason

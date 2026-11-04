@@ -1161,6 +1161,9 @@
                                         ;; tests stop querying it by hand.
                                         sessions "SPEC §10: every row of §8's table, through the test's own connection"
                                         session  "SPEC §10: one row of §8's table by id, or nil"}
+    ;; 2026-11-04, SPEC §10 amendment: a value the engines answer differently, made one;
+    ;; no statement, so §9 cannot grow from it.
+    dev.arkaitz.db-base.value          {bool "SPEC §10: a BOOLEAN read as a boolean on every engine"}
     ;; 2026-09-29, the user's decision (SPEC §10): the one value a web-base host installs.
     dev.arkaitz.db-base.web            {plugin "SPEC §10: §8's store and a readiness probe, as a web-base plugin"}
     dev.arkaitz.db-base.session        {store            "SPEC §8: Ring's session-store port, over this library's table"
