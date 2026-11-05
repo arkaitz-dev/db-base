@@ -90,7 +90,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.18.0 and auth-base 0.18.0 as releases** (2026-11-05, the shop round; each calls `check-identifiers!` at boot),
+Every host consumes **web-base 0.19.0 and auth-base 0.18.0 as releases** (2026-11-05; each calls `check-identifiers!` at boot),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed —
 and installs **both libraries as web-base plugins**: `db-base.web/plugin` for the
 session store and `/health`, `auth-base.web/plugin` for the standard sign-in and
