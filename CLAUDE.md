@@ -28,7 +28,7 @@ the store refusing a boot without its table and `testing/sessions`/`session`; **
 prefix on GraalVM CE 25.0.4); **0.3.0 on 2026-09-29**, `dev.arkaitz.db-base.web`, this
 library as a web-base plugin (SPEC §10, rule 3 amended by the user); **0.4.0 on
 2026-09-30**, `:libraries` — a library's migrations run beside the host's (SPEC §7); **0.5.0 on
-2026-10-06**, the web plugin passing web-base 0.15.0's `:session :renew` through. **0.6.0 on 2026-10-08**, `testing/in-flight` (booking B24). **0.7.0 on 2026-10-09**, the control table created here, blind to other schemas (helpdesk H21). **0.8.0, 2026-11-05**, `value/bool` (shop S1), released at the end of the shop round. Every public var of `src`
+2026-10-06**, the web plugin passing web-base 0.15.0's `:session :renew` through. **0.6.0 on 2026-10-08**, `testing/in-flight` (booking B24). **0.7.0 on 2026-10-09**, the control table created here, blind to other schemas (helpdesk H21). **0.8.0 on 2026-11-05**, `value/bool` (shop S1), released at the end of the shop round and verified from Clojars (tag `v0.8.0`). Every public var of `src`
 is pinned by name in `structure_test`'s `accepted-publics`, so a new one reds until it is
 listed there with its reason.
 
