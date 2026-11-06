@@ -125,10 +125,22 @@
   chosen rather than hoped for. Returns
 
     {:handle   the derived handle, for the caller that must park
-     :arrived  a promise, delivered the SQL of the parked statement when it parks
+     :arrived  a promise, delivered the SQL of the parked statement when it parks, or
+               :commit for a park at a commit
      :release! a function of no arguments that ends the park; calling it twice is harmless
      :exit     a promise, delivered :released, :guard-expired or :interrupted when the
                park ends}
+
+  **`{:at :commit}`, the one option** (since 0.9.0), moves the park to the first
+  `Connection.commit` of a connection it lends, and statements are then never offered:
+  `accepts?` is handed `:commit`, so `#{:commit}` takes the first commit and a predicate
+  that counts calls can take a later one. That is the window between a transaction's last
+  statement and its commit, which no park before a statement reaches. The transaction
+  waits holding every lock it took — the point of parking there — so a caller that needs
+  one of those rows waits too, until the release: run it on a thread of its own. A commit
+  made by `setAutoCommit` or by closing the connection is not seen. `{:at :prepare}` is
+  the default. A keyword or a symbol is refused as `accepts?`: either is callable and
+  answers nil for every SQL string, so `(parking handle :commit 10000)` would never park.
 
   **`:exit` is the one to assert.** A park that ended by `guard-ms` means the window was
   not the one the test built, and a test that ignores that proves nothing about the order
@@ -153,46 +165,63 @@
   side guarantees (PostgreSQL's row locks) is out of reach of both test engines, whatever
   the harness. **An H2 memory URL needs a close delay**, or the last connection to close
   takes the database with it."
-  [handle accepts? guard-ms]
-  (when-not (instance? DataSource (:datasource handle))
-    (refuse! "parking takes the handle start returned, whose :datasource is a javax.sql.DataSource"
-             [:datasource]))
-  (when-not (ifn? accepts?)
-    (refuse! "parking takes a predicate of the statement's SQL" [:accepts?]))
-  (when-not (and (integer? guard-ms) (<= 1 guard-ms Integer/MAX_VALUE))
-    (throw (ex-info (str "db-base: guard-ms must be an integer from 1 to " Integer/MAX_VALUE)
-                    {:config-key [:guard-ms] :value guard-ms})))
-  (let [^DataSource real (:datasource handle)
-        fired    (AtomicBoolean. false)
-        released (CountDownLatch. 1)
-        arrived  (promise)
-        exit     (promise)
-        park!    (fn [sql]
-                   (deliver arrived sql)
-                   (deliver exit (try (if (.await released (long guard-ms) TimeUnit/MILLISECONDS)
-                                        :released
-                                        :guard-expired)
-                                      (catch InterruptedException _
-                                        (.interrupt (Thread/currentThread))
-                                        :interrupted))))
-        lend     (fn [^Connection connection]
-                   (proxying Connection
-                             (fn [^Method m args]
-                               (when (and (not (.get fired))
-                                          (preparing (.getName m))
-                                          (string? (first args))
-                                          (accepts? (first args))
-                                          (.compareAndSet fired false true))
-                                 (park! (first args)))
-                               (forward m connection args))))]
-    {:handle   (assoc handle :datasource
-                      (proxying DataSource
-                                (fn [^Method m args]
-                                  (let [answer (forward m real args)]
-                                    (if (= "getConnection" (.getName m)) (lend answer) answer)))))
-     :arrived  arrived
-     :release! (fn [] (.countDown released))
-     :exit     exit}))
+  ([handle accepts? guard-ms] (parking handle accepts? guard-ms {:at :prepare}))
+  ([handle accepts? guard-ms options]
+   (when-not (instance? DataSource (:datasource handle))
+     (refuse! "parking takes the handle start returned, whose :datasource is a javax.sql.DataSource"
+              [:datasource]))
+   (when-not (ifn? accepts?)
+     (refuse! "parking takes a predicate of the statement's SQL" [:accepts?]))
+   (when (or (keyword? accepts?) (symbol? accepts?))
+     (refuse! "parking takes a predicate, and a keyword or a symbol only looks itself up; to park at a commit, pass {:at :commit}"
+              [:accepts?]))
+   (when-not (and (integer? guard-ms) (<= 1 guard-ms Integer/MAX_VALUE))
+     (throw (ex-info (str "db-base: guard-ms must be an integer from 1 to " Integer/MAX_VALUE)
+                     {:config-key [:guard-ms] :value guard-ms})))
+   (when-not (map? options)
+     (refuse! "parking's options are a map whose one key is :at" [:options]))
+   (when-let [unknown (seq (remove #{:at} (keys options)))]
+     (throw (ex-info "db-base: parking's options are a map whose one key is :at"
+                     {:config-key [:options] :unknown (set unknown)})))
+   (when-not (contains? #{:prepare :commit} (:at options :prepare))
+     (throw (ex-info "db-base: parking's :at is :prepare or :commit"
+                     {:config-key [:at] :value (:at options)})))
+   (let [^DataSource real (:datasource handle)
+         at       (:at options :prepare)
+         fired    (AtomicBoolean. false)
+         released (CountDownLatch. 1)
+         arrived  (promise)
+         exit     (promise)
+         park!    (fn [offer]
+                    (deliver arrived offer)
+                    (deliver exit (try (if (.await released (long guard-ms) TimeUnit/MILLISECONDS)
+                                         :released
+                                         :guard-expired)
+                                       (catch InterruptedException _
+                                         (.interrupt (Thread/currentThread))
+                                         :interrupted))))
+         offered  (if (= :commit at)
+                    (fn [^Method m _args] (when (= "commit" (.getName m)) :commit))
+                    (fn [^Method m args]
+                      (when (and (preparing (.getName m)) (string? (first args))) (first args))))
+         lend     (fn [^Connection connection]
+                    (proxying Connection
+                              (fn [^Method m args]
+                                (let [offer (offered m args)]
+                                  (when (and (some? offer)
+                                             (not (.get fired))
+                                             (accepts? offer)
+                                             (.compareAndSet fired false true))
+                                    (park! offer)))
+                                (forward m connection args))))]
+     {:handle   (assoc handle :datasource
+                       (proxying DataSource
+                                 (fn [^Method m args]
+                                   (let [answer (forward m real args)]
+                                     (if (= "getConnection" (.getName m)) (lend answer) answer)))))
+      :arrived  arrived
+      :release! (fn [] (.countDown released))
+      :exit     exit})))
 
 (defn in-flight
   "Two callers of `handle` in flight, the second suspended inside the first's window:

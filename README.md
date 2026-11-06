@@ -275,7 +275,10 @@ as the error it is.
   is chosen rather than raced for; SQLite serialises writers, and a barrier alone passes
   a broken implementation every time. `:exit` says whether the test ended the park or
   the guard did — assert it. Stop the handle you passed in, not `:handle`; a pool of one
-  deadlocks.
+  deadlocks. `(dbt/parking db-handle #{:commit} 10000 {:at :commit})` parks at the first
+  commit instead (since 0.9.0): the transaction has run every statement and holds every
+  lock it took, so a caller that needs one of its rows waits behind it until the release —
+  run that caller on a thread of its own. `:arrived` is then `:commit`.
 
 - **`in-flight`** builds the whole interleaving: `(dbt/in-flight db-handle accepts? first!
   second!)` runs `second!` on a parked handle, `first!` to the end in its window, then

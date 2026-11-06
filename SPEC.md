@@ -746,7 +746,7 @@ implementations of published third-party ports whose tables are its own. Since
   The state is read for that one question and never to name a collision.
 - **`dev.arkaitz.db-base.testing`** — for a host's tests: `rows` and `one`, a reader over
   a connection of its own opened from the configuration `start` takes; and `parking`,
-  which suspends one caller before a statement it names, so an interleaving is chosen
+  which suspends one caller before a statement it names (or at its commit), so an interleaving is chosen
   rather than raced for. Nothing that touches a file (§5 has no exemption, and a
   temporary database is a file), and no race orchestrator, because the three places that
   park orchestrate three different ways.
@@ -756,6 +756,13 @@ implementations of published third-party ports whose tables are its own. Since
   through its own SQL breaks when §8 migrates it, and a reader here moves with it in the
   same commit. They read and never write: a test that must age a session writes its own
   statement, knowing it reaches into this library's table.
+  **Amended 2026-11-06, decided with the user** (the academy's FRICTION A10): a park may
+  sit at a transaction's commit instead of before a statement, opted into with
+  `{:at :commit}`, because the window between a transaction's last statement and its
+  commit is the one where a missing lock shows, and no park before a statement reaches
+  it. It stays a park: no race orchestrator, no condition to release on, and no probe of
+  the engine's lock table, which would be one engine's (rule 2 of CLAUDE.md) and is the
+  host's.
 - **`dev.arkaitz.db-base/pool-stats`** (amended later the same day, from the review of
   whether this library is ready for production) — the pool's load as HikariCP counts it,
   `{:active :idle :total :waiting}`. Without it the pool was unobservable unless the host

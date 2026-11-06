@@ -209,6 +209,82 @@
          (is (= [nil nil] [(release!) (release!)]) (str engine ": releasing again is harmless"))
          (finally (release!)))))))
 
+(deftest parking-at-commit-suspends-the-first-commit-with-its-write-done-and-unseen-until-release
+  ;; The academy's window (FRICTION A10): after a transaction's last statement and before
+  ;; its commit, which a park before a statement cannot reach. `accepts?` records what it
+  ;; is offered, so a park that also offered the statements is seen even though this one
+  ;; accepts only the commit.
+  (on-each-engine
+   (fn [{:keys [engine cfg handle]}]
+     (let [offered  (atom [])
+           {:keys [arrived release! exit] parked :handle}
+           (dbt/parking handle (fn [x] (swap! offered conj x) (= :commit x)) 10000 {:at :commit})
+           updated  (promise)
+           [_ a]    (ts/running
+                     #(with-open [^Connection c (.getConnection ^DataSource (:datasource parked))]
+                        (.setAutoCommit c false)
+                        (with-open [st (.prepareStatement c "UPDATE t SET name = 'z' WHERE id = 1")]
+                          (deliver updated (.executeUpdate st)))
+                        (.commit c)
+                        :committed))]
+       (try
+         (is (= 1 (deref updated 5000 ::hang))
+             (str engine ": witness: the transaction's UPDATE ran, before any commit"))
+         (is (= :commit (deref arrived 5000 ::hang))
+             (str engine ": the park landed on the commit, and says so"))
+         (is (= [["a"]] (dbt/rows cfg "SELECT name FROM t WHERE id = 1"))
+             (str engine ": while parked, a connection of the test's own reads the row as it was —"
+                  " the update is done and not committed"))
+         (is (false? (realized? exit))
+             (str engine ": and the park was still holding after that read"))
+         (release!)
+         (is (= :released (deref exit 5000 ::hang)) (str engine ": the park ended by release"))
+         (is (= [:ok :committed] (deref a 5000 ::hang)) (str engine ": and the commit then ran"))
+         (is (= [["z"]] (dbt/rows cfg "SELECT name FROM t WHERE id = 1"))
+             (str engine ": the update is now visible to everybody"))
+         (is (= [:commit] @offered)
+             (str engine ": only the commit was offered to `accepts?`, never a statement: " (pr-str @offered)))
+         (finally (release!)))))))
+
+(deftest parking-at-commit-takes-the-commit-its-predicate-accepts--a-declined-commit-and-a-rollback-run-through
+  ;; Four transactions in turn on one thread: a commit the predicate declines, a
+  ;; rollback, the commit it accepts — the second offer — and, after the release, one
+  ;; more commit, which runs through without being offered.
+  (on-each-engine
+   (fn [{:keys [engine cfg handle]}]
+     (let [offered (atom [])
+           {:keys [arrived release! exit] parked :handle}
+           (dbt/parking handle (fn [x] (= 2 (count (swap! offered conj x)))) 10000 {:at :commit})
+           written (promise)
+           tx      (fn [sql end]
+                     (with-open [^Connection c (.getConnection ^DataSource (:datasource parked))]
+                       (.setAutoCommit c false)
+                       (with-open [st (.prepareStatement c ^String sql)] (.executeUpdate st))
+                       (when (= "UPDATE t SET name = 'z' WHERE id = 1" sql) (deliver written true))
+                       (if (= :commit end) (.commit c) (.rollback c))))
+           [_ a]   (ts/running #(do (tx "UPDATE t SET name = 'y' WHERE id = 2" :commit)
+                                    (tx "UPDATE t SET name = 'x' WHERE id = 3" :rollback)
+                                    (tx "UPDATE t SET name = 'z' WHERE id = 1" :commit)
+                                    :parked-one-done))]
+       (try
+         (is (= :commit (deref arrived 5000 ::hang)) (str engine ": a commit was parked"))
+         (is (true? (deref written 0 ::not-yet))
+             (str engine ": the park came after the third transaction's UPDATE — so not at the"
+                  " rollback, which comes before it"))
+         (is (= [["a"] ["y"] ["c"]] (dbt/rows cfg "SELECT name FROM t WHERE id IN (1, 2, 3) ORDER BY id"))
+             (str engine ": the parked commit is the third transaction's, its row 1 written and unseen;"
+                  " the declined commit ran through ('y'), the rollback was neither parked nor kept ('c')"))
+         (is (false? (realized? exit)) (str engine ": and the park was still holding after that read"))
+         (finally (release!)))
+       (is (= :released (deref exit 5000 ::hang)) (str engine ": released by the test"))
+       (is (= [:ok :parked-one-done] (deref a 5000 ::hang)) (str engine ": and the parked commit ran"))
+       (tx "UPDATE t SET name = 'w' WHERE id = 3" :commit)
+       (is (= [["z"] ["y"] ["w"]] (dbt/rows cfg "SELECT name FROM t WHERE id IN (1, 2, 3) ORDER BY id"))
+           (str engine ": every commit landed, the one after the park unparked"))
+       (is (= [:commit :commit] @offered)
+           (str engine ": offered the two commits before the park and nothing else — not the"
+                " rollback, not the commit after it: " (pr-str @offered)))))))
+
 (deftest in-flight-runs-the-first-caller-inside-the-seconds-window
   ;; Two autocommit check-then-insert callers: with the first run between the second's
   ;; check and its insert, both insert — the window is the one asked for.
@@ -332,6 +408,27 @@
        (is (= ["db-base: parking takes a predicate of the statement's SQL" {:config-key [:accepts?]}]
               (ts/attempt #(dbt/parking handle accepts? 1)))
            (str engine ": refused as a predicate: " (pr-str accepts?))))
+     (doseq [accepts? [:commit 'commit]]
+       (is (ifn? accepts?) (str engine ": witness: callable, so `ifn?` alone would let it through: " (pr-str accepts?)))
+       (is (= [(str "db-base: parking takes a predicate, and a keyword or a symbol only looks itself up;"
+                    " to park at a commit, pass {:at :commit}")
+               {:config-key [:accepts?]}]
+              (ts/attempt #(dbt/parking handle accepts? 1)))
+           (str engine ": a lookup that never answers truthy is refused, not left to never park: "
+                (pr-str accepts?))))
+     (doseq [[options expected]
+             [[:commit ["db-base: parking's options are a map whose one key is :at" {:config-key [:options]}]]
+              [nil ["db-base: parking's options are a map whose one key is :at" {:config-key [:options]}]]
+              [[:at :commit] ["db-base: parking's options are a map whose one key is :at" {:config-key [:options]}]]
+              [{:at :commit :when :first} ["db-base: parking's options are a map whose one key is :at"
+                                           {:config-key [:options] :unknown #{:when}}]]
+              [{:at :bogus} ["db-base: parking's :at is :prepare or :commit" {:config-key [:at] :value :bogus}]]
+              [{:at nil} ["db-base: parking's :at is :prepare or :commit" {:config-key [:at] :value nil}]]]]
+       (is (= expected (ts/attempt #(dbt/parking handle (constantly false) 1 options)))
+           (str engine ": options refused by name: " (pr-str options))))
+     (doseq [options [{} {:at :prepare} {:at :commit}]]
+       (is (= #{:handle :arrived :release! :exit} (set (keys (dbt/parking handle (constantly false) 1 options))))
+           (str engine ": options accepted: " (pr-str options))))
      (doseq [g [0 1.0 "5" 2147483648]]
        (is (= ["db-base: guard-ms must be an integer from 1 to 2147483647" {:config-key [:guard-ms] :value g}]
               (ts/attempt #(dbt/parking handle (constantly false) g)))
