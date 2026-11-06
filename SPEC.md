@@ -736,6 +736,14 @@ implementations of published third-party ports whose tables are its own. Since
   takes two functions of the host's and holds no SQL, takes no datasource and reads no
   row itself. Its second function reads; a fallback that writes is update-or-insert,
   which §8 is the argument against.
+  **Amended 2026-11-06, decided with the user** (the academy's FRICTION A14): the
+  collision is still recognised by looking, but an aborted transaction is not a
+  collision. A state of class 40 other than 40003 — on the write's exception or among its
+  causes — is rethrown without a look, because the engine rolled this transaction back
+  while another writer was in flight, and a look then reads a world still moving: in the
+  academy a deadlock victim's look answered "already a student" about a row the other
+  transaction was deleting. 40003 keeps the look, since that write may have committed.
+  The state is read for that one question and never to name a collision.
 - **`dev.arkaitz.db-base.testing`** — for a host's tests: `rows` and `one`, a reader over
   a connection of its own opened from the configuration `start` takes; and `parking`,
   which suspends one caller before a statement it names, so an interleaving is chosen
@@ -823,7 +831,7 @@ web-base and is wired the way web-base is — asked.)
 | The host's engine is PostgreSQL, chosen from three that were all run; the library assumes none of them, and the test pair is deliberately not it | §3 |
 | Integrant is used, not imposed: an optional namespace, one key | §10 |
 | A readiness check belongs here, and its timeout has no default | §6 |
-| A refused write is answered by a look and never by SQLSTATE: one function, two of the host's, no SQL | §10 |
+| A refused write is answered by a look and never by SQLSTATE: one function, two of the host's, no SQL; a rolled-back transaction (class 40 but 40003) is rethrown unlooked | §10 |
 | A host's tests get a reader and a park from here, and nothing that touches a file or runs a race | §10 |
 
 **Open**

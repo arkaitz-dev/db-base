@@ -217,8 +217,13 @@ ordinary case and not a failure.
 
 If the write throws an `SQLException`, the second function runs once: a truthy answer is
 returned in the write's place, and nil or false rethrows the write's own exception,
-unwrapped. **It never reads the SQLSTATE**, because the same refusal is 23505 on
-PostgreSQL, 23000 on MySQL and nothing at all on SQLite. Two rules are yours to keep:
+unwrapped. **It never reads the SQLSTATE to name a collision**, because the same refusal
+is 23505 on PostgreSQL, 23000 on MySQL and nothing at all on SQLite. It reads it for one
+thing only (since 0.9.0): a state of class 40 but 40003 — 40P01 a deadlock, 40001 a
+serialization failure — on the exception or among its first 31 causes means the engine rolled
+your transaction back while another writer was in flight, and that exception is rethrown
+without a look, because a look then reads a world still moving. Retry, or report it.
+Two rules are yours to keep:
 
 - **The second function asks for everything that makes the row yours**, not only its
   key. A look by key alone accepts somebody else's row as your own.

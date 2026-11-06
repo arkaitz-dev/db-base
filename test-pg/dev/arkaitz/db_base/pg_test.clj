@@ -15,6 +15,7 @@
             [dev.arkaitz.db-base :as db]
             [dev.arkaitz.db-base.collision :as collision]
             [dev.arkaitz.db-base.session :as session]
+            [dev.arkaitz.db-base.testing :as dbt]
             [next.jdbc :as jdbc]
             [ragtime.next-jdbc :as ragtime-jdbc]
             [ragtime.protocols :as ragtime-protocols]
@@ -168,6 +169,83 @@
                 "so the transaction is alive for the next statement")))
         (is (= [[1] [2]] (rows config "SELECT id FROM membership ORDER BY id")) "and it committed")
         (finally (db/stop handle))))))
+
+;; --- a deadlock, forced ------------------------------------------------------------
+
+(defn- outcome [f] (future (try [:ok (f)] (catch Throwable t [:threw t]))))
+
+(defn- blocked?
+  "Whether a backend whose application_name is `app` is waiting on a lock another holds,
+  read through a connection of the test's own; polled for at most `ms`."
+  [config app ms]
+  (let [deadline (+ (System/currentTimeMillis) ms)]
+    (loop []
+      (cond
+        (= [[1]] (rows config (str "SELECT CAST(COUNT(*) AS INTEGER) FROM pg_stat_activity"
+                                   " WHERE application_name = '" app "'"
+                                   " AND cardinality(pg_blocking_pids(pid)) > 0")))
+        true
+        (< deadline (System/currentTimeMillis)) false
+        :else (do (Thread/sleep 20) (recur))))))
+
+(deftest a-deadlock-victim's-own-40P01-leaves-arbitrate!-and-nobody-looks
+  ;; FRICTION A14 in the academy, reduced to two rows taken in opposite orders. A takes
+  ;; row 1 and is parked before row 2; B, the whole transaction inside `arbitrate!`, takes
+  ;; row 2 and is parked before row 1. A is let go first and is seen waiting on B; then B,
+  ;; which closes the cycle. The victim is whichever backend's deadlock check runs first
+  ;; once the cycle exists: B's timeout is 200 ms from the moment it waits, A's is 60 s,
+  ;; so it is B. (SET of deadlock_timeout needs a superuser, which pg.local.edn's is.)
+  ;; B's look reads a row that is there, so without the class-40 check `arbitrate!` would
+  ;; return it — the confident answer the academy got.
+  (with-schema [config]
+    (let [handle (db/start (assoc config :migrations :none))
+          ds     (:datasource handle)
+          a-sql  "UPDATE pair SET n = n + 1 WHERE id = 2"
+          b-sql  "UPDATE pair SET n = n + 10 WHERE id = 1"
+          a      (dbt/parking handle #{a-sql} 30000)
+          b      (dbt/parking handle #{b-sql} 30000)
+          b-threw (atom nil)
+          calls  (atom 0)]
+      (try
+        (jdbc/execute! ds ["CREATE TABLE pair (id INTEGER NOT NULL PRIMARY KEY, n INTEGER NOT NULL)"])
+        (jdbc/execute! ds ["INSERT INTO pair (id, n) VALUES (1, 0), (2, 0)"])
+        (let [a-run (outcome #(jdbc/with-transaction [tx (:datasource (:handle a))]
+                                (jdbc/execute! tx ["SET LOCAL deadlock_timeout = '60s'"])
+                                (jdbc/execute! tx ["SET LOCAL application_name = 'db_base_deadlock_a'"])
+                                (jdbc/execute! tx ["UPDATE pair SET n = n + 1 WHERE id = 1"])
+                                (jdbc/execute! tx [a-sql])
+                                :a-committed))
+              _     (is (= a-sql (deref (:arrived a) 10000 ::hang)) "witness: A holds row 1 and is parked before row 2")
+              b-run (outcome #(collision/arbitrate!
+                               (fn []
+                                 (jdbc/with-transaction [tx (:datasource (:handle b))]
+                                   (jdbc/execute! tx ["SET LOCAL deadlock_timeout = '200ms'"])
+                                   (jdbc/execute! tx ["UPDATE pair SET n = n + 10 WHERE id = 2"])
+                                   (try (jdbc/execute! tx [b-sql])
+                                        (catch SQLException e (reset! b-threw e) (throw e)))
+                                   :b-committed))
+                               (fn []
+                                 (swap! calls inc)
+                                 (jdbc/execute-one! ds ["SELECT n FROM pair WHERE id = 2"]))))
+              _     (is (= b-sql (deref (:arrived b) 10000 ::hang)) "witness: B holds row 2 and is parked before row 1")
+              _     ((:release! a))
+              _     (is (true? (blocked? config "db_base_deadlock_a" 10000))
+                        "witness: A, let go, is waiting on B's row 2 — so B's next statement closes a cycle")
+              _     ((:release! b))
+              a-out (deref a-run 30000 [::hang])
+              b-out (deref b-run 30000 [::hang])]
+          (is (= [:released :released] [(deref (:exit a) 1000 ::hang) (deref (:exit b) 1000 ::hang)])
+              "witness: both parks were ended by the test, not by their guards")
+          (is (= [:ok :a-committed] a-out)
+              (str "witness: A was not the victim and committed: " (pr-str a-out)))
+          (is (= "40P01" (some-> ^SQLException @b-threw .getSQLState))
+              (str "witness: B's own statement was refused as the deadlock's victim: " (pr-str @b-threw)))
+          (is (= [:threw true 0] [(first b-out) (identical? @b-threw (second b-out)) @calls])
+              (str "arbitrate! let B's own 40P01 leave, the very exception, and nobody looked —"
+                   " [outcome, the same exception, looks]: " (pr-str [(first b-out) (second b-out) @calls])))
+          (is (= [[1 1] [2 1]] (rows config "SELECT id, n FROM pair ORDER BY id"))
+              "A's two updates stand and B's none"))
+        (finally ((:release! a)) ((:release! b)) (db/stop handle))))))
 
 (defn- session-of-length [n] {:v (apply str (repeat (- n 7) "x"))})
 

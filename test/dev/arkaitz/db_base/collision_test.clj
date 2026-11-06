@@ -56,12 +56,13 @@
           (str "the very exception the write threw leaves, unwrapped: " label))
       (is (= 1 @calls) (str "after one look: " label)))))
 
-(deftest the-engine's-code-for-a-refusal-is-never-read
+(deftest the-engine's-code-for-a-duplicate-decides-nothing
   ;; The control against the most tempting optimisation there is: "23505 means a
   ;; duplicate, so skip the look". SQLite leaves the state empty for the same refusal,
   ;; so a function that trusted the code would answer differently on two engines for
   ;; one event. Both directions are pinned: a duplicate-key code with nothing there
-  ;; still rethrows, and no code at all with the row there still finds it.
+  ;; still rethrows, and no code at all with the row there still finds it. The one class
+  ;; of code that is read, a rolled-back transaction, has its own test below.
   (let [duplicate (refusal "duplicate key" "23505")]
     (is (identical? duplicate (thrown #(collision/arbitrate! (fn [] (throw duplicate))
                                                              (constantly nil))))
@@ -122,6 +123,77 @@
       (is (empty? (.getSuppressed ^Throwable refused))
           (str "and only that way round — suppressing each in the other makes a cycle that"
                " prints for ever in a stack trace: " label)))))
+
+;; --- an aborted transaction ---------------------------------------------------
+
+(deftest a-transaction-the-engine-rolled-back-is-rethrown-without-a-look
+  ;; FRICTION A14 in the academy: a deadlock victim's look ran while the other writer
+  ;; was still in flight and answered with confidence. Class 40 is read by its prefix,
+  ;; so 40000 and 40002 are here beside the two PostgreSQL spells, and 42P01 shares its
+  ;; first digit and is not of it; 40003 is the one exception, and the rows that must still look are as much the claim as the rows
+  ;; that must not — a function that never looked would pass the first half alone. The
+  ;; look answers truthy in every row, so a rethrow can only come from the check.
+  (doseq [[state looks?] [["40P01" false] ["40001" false] ["40000" false] ["40002" false]
+                          ["40003" true] ["23505" true] ["42P01" true] [nil true]]]
+    (let [refused (refusal "refused" state)
+          calls   (atom 0)
+          out     (try (collision/arbitrate! (fn [] (throw refused)) (counting calls :found))
+                       (catch Throwable t t))]
+      (is (= state (.getSQLState ^SQLException refused)) (str "witness: the stub carries " (pr-str state)))
+      (if looks?
+        (is (= [1 :found] [@calls out])
+            (str (pr-str state) ": not a rolled-back transaction, so the look runs once and answers"))
+        (is (= [0 true] [@calls (identical? refused out)])
+            (str (pr-str state) ": the engine rolled the transaction back, so the write's own"
+                 " exception leaves and nobody looks — [calls, rethrown as it came]: "
+                 (pr-str [@calls out])))))))
+
+(defn- chain
+  "An exception whose cause chain is `links`, outermost first; each link is an SQLState
+  string, nil for an `SQLException` with none, or `:runtime` for a `RuntimeException`."
+  [links]
+  (reduce (fn [cause link]
+            (if (= :runtime link)
+              (RuntimeException. "not an SQLException" ^Throwable cause)
+              (SQLException. "a link" ^String link ^Throwable cause)))
+          nil
+          (reverse links)))
+
+(deftest a-rolled-back-state-anywhere-among-the-first-32-links-counts--and-a-cyclic-chain-still-ends
+  ;; Any link of the chain counts, whatever the links above or below it say, and a link
+  ;; that is not an SQLException does not end the walk. The bound is the docstring's, 32
+  ;; links counting the write's own exception, pinned at both ends: a host that wraps a
+  ;; driver's exception a few times still gets the rethrow.
+  (doseq [[label links looks?]
+          [["a wrapper with no state over a deadlock" [nil "40P01"] false]
+           ["a wrapper with a state of its own over a deadlock" ["23505" "40P01"] false]
+           ["a deadlock over a cause with another state" ["40P01" "23505"] false]
+           ["a deadlock under a RuntimeException in the chain" [nil :runtime "40P01"] false]
+           ["a deadlock as the 32nd link, a RuntimeException among the 31 above it"
+            (-> [nil :runtime] (into (repeat 29 nil)) (conj "40P01")) false]
+           ["a deadlock as the 33rd link, past the bound" (-> [nil :runtime] (into (repeat 30 nil)) (conj "40P01")) true]
+           ["no rolled-back state anywhere" [nil "23505" :runtime nil] true]]]
+    (let [outer (chain links)
+          calls (atom 0)
+          out   (try (collision/arbitrate! (fn [] (throw outer)) (counting calls :found))
+                     (catch Throwable t t))]
+      (is (= [(count links) true]
+             [(count (take-while some? (iterate ex-cause outer))) (instance? SQLException outer)])
+          (str "witness: the chain has its " (count links) " links, the outermost an SQLException,"
+               " which is all arbitrate! catches: " label))
+      (if looks?
+        (is (= [1 :found] [@calls out]) (str label ": the look runs once and answers"))
+        (is (= [0 true] [@calls (identical? outer out)])
+            (str label ": rethrown as it came, without a look — [calls, rethrown]: "
+                 (pr-str [@calls out]))))))
+  (let [a (refusal "a" "23505")
+        b (refusal "b" "23505")
+        _ (.initCause a b)
+        _ (.initCause b a)
+        [_ result] (ts/running #(collision/arbitrate! (fn [] (throw a)) (constantly :found)))]
+    (is (identical? a (ex-cause b)) "witness: the chain is a cycle")
+    (is (= [:ok :found] (deref result 5000 ::hang))
+        "a cyclic chain with no rolled-back state ends the walk and the look answers")))
 
 ;; --- the engines ------------------------------------------------------------
 
