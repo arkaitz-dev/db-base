@@ -145,8 +145,8 @@ refusal on every request that touches a session.
 
 **The expiry is absolute, not sliding.** A row's expiry is set when the row is written,
 and a signed-in page in steady state writes nothing — so a person active all afternoon is
-signed out `:lifetime-ms` after the last write (the login, or the first page that minted
-a CSRF token), however busy they were. Since 0.5.0 the plugin passes web-base 0.15.0's
+signed out `:lifetime-ms` after the last write (the login, which also mints the session's
+CSRF token), however busy they were. Since 0.5.0 the plugin passes web-base 0.15.0's
 `:renew` through, which writes a used session again once per window — every write here
 sets the expiry a lifetime ahead — until a cap after the sign-in:
 
@@ -192,9 +192,10 @@ the reason this library is more than wiring.
 
 **Before you wire it, know what it costs.** A session in a row means every request that
 carries a session cookie reads the database, and so a pool that is down fails the request
-instead of degrading it. With web-base 0.4.0 or later a visitor who never signs in leaves a
-row only when a page renders a form, because the CSRF token is written to the session the
-first time something reads it; nothing removes those rows but `reclaim-expired!`.
+instead of degrading it. With web-base 0.21.0 or later a visitor who never signs in leaves
+no row: an anonymous form carries no CSRF token and is checked by its origin, and a token is
+born only when a session rotates. A row is a session that holds something, and nothing
+removes an expired one but `reclaim-expired!`.
 
 **Put `/health` in web-base's `:sessionless`**, answered before the session layer. Mounted
 as an ordinary route, a probe that carries a cookie reads the session first, and when the

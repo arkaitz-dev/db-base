@@ -90,7 +90,7 @@ and db-base nor the asynchronous logback of a production host: those live in the
 template (`../app-template`), which builds and verifies native images. A demo is where a
 library's contract is exercised, not a deployment recipe.
 
-Every host consumes **web-base 0.20.0 and auth-base 0.18.0 as releases** (2026-11-05; each calls `check-identifiers!` at boot),
+Every host consumes **web-base 0.21.0 and auth-base 0.18.0 as releases** (2026-11-06; each calls `check-identifiers!` at boot),
 which carry what the hosts found missing — `FRICTION.md` says which entry each closed —
 and installs **both libraries as web-base plugins**: `db-base.web/plugin` for the
 session store and `/health`, `auth-base.web/plugin` for the standard sign-in and
@@ -271,6 +271,8 @@ Two belong to **web-base**, found by building the demo against it and measured
       in web-base 0.4.0 (`ce077b0`)**: the CSRF token is written only when a request
       used it, so a probe, JSON or a redirect writes nothing; only a page that renders
       a form costs a row. Pinned in every host (`a-health-probe-leaves-no-session-row`).
+      **And since web-base 0.21.0 not even that**: an anonymous form carries no token and
+      is checked by origin, so only a rotated session is a row (pinned in `demo`'s seam test).
       Originally: **every request without a cookie writes a session row**, because ring-anti-forgery
       keeps its token in the session. Three health probes, three rows; a balancer polling
       every five seconds writes seventeen thousand a day, and §8's rows are reclaimed only
@@ -454,7 +456,8 @@ is any code to break.**
 - **A session in a row puts the database in front of every request.** Once §8's store is
   wired, a request no longer merely *may* touch the database — it does. Everything
   downstream inherits that: a closed pool stops being a degraded mode and becomes a
-  failed request, an anonymous visitor costs a row, and a health check can no longer
+  failed request, an anonymous visitor costs a row (until web-base 0.21.0, which checks an
+  anonymous form by origin and mints no token for it), and a health check can no longer
   report what it computes. None of it is visible from reading either library; all of it
   appeared the moment the two were put together (measured 2026-09-21, pinned in the
   demo's seam test).

@@ -235,9 +235,8 @@
             (str "two more page views did not move its expiry — which is computed when a row"
                  " is written, so an unchanged one is a row that was not written"))
         (is (= count- (rows))
-            (str "and added no rows either. Not an absolute count: the anonymous visits before"
-                 " the login render its form and leave rows of their own, because the CSRF token lives in the"
-                 " session — which a page with a form needs, and nothing else pays"))))))
+            (str "and added no rows either. Counted against the rows before them, because what"
+                 " this claims is about the page views, not about what the sign-in left"))))))
 
 (deftest a-session-last-renewed-a-window-ago-moves-its-row-and-its-cookie-on-the-next-page
   ;; The host's `:session-renew` reaches web-base through db-base's plugin. A row is

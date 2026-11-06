@@ -108,20 +108,24 @@
   [app value]
   (:body (app (carrying (mock/request :get "/") value))))
 
+(defn- from-this-site
+  "`request` as a browser sends a form submitted from one of this host's own pages. Since
+  web-base 0.21.0 that header is the whole CSRF check for a visitor with no session: an
+  anonymous page renders no token and sets no cookie, so there is nothing else to carry."
+  [request]
+  (assoc-in request [:headers "sec-fetch-site"] "same-origin"))
+
 (defn- name-yourself!
-  "A visitor naming themselves the way a browser does: the page first, for the CSRF token
-  and the session cookie that holds it, then the POST carrying both."
+  "A visitor with no session naming themselves the way a browser does: one POST, from
+  this site. The token a signed-in form needs is minted by the rotation this answers."
   [app visitor]
-  (let [form     (app (mock/request :get "/"))
-        response (app (-> (mock/request :post "/session" {"visitor" visitor
-                                                          "__anti-forgery-token" (wt/csrf-token form)})
-                          (wt/with-cookies form)))]
+  (let [response (app (from-this-site (mock/request :post "/session" {"visitor" visitor})))]
     [response (cookie-of response)]))
 
-(defn- post-note! [app body]
-  (let [form (app (mock/request :get "/"))]
-    (app (-> (mock/request :post "/notes" {"body" body "__anti-forgery-token" (wt/csrf-token form)})
-             (wt/with-cookies form)))))
+(defn- post-note!
+  "An anonymous visitor's note, submitted from this site."
+  [app body]
+  (app (from-this-site (mock/request :post "/notes" {"body" body}))))
 
 (defn- threads [pattern]
   (into #{}
@@ -184,18 +188,29 @@
       (let [system (boot path)
             handle (app system)]
         (try
-          (let [anon   (handle (mock/request :get "/"))
-                before (cookie-of anon)
-                named  (handle (-> (mock/request :post "/session"
-                                                 {"visitor" "ada"
-                                                  "__anti-forgery-token" (wt/csrf-token anon)})
-                                   (wt/with-cookies anon)))
-                after  (cookie-of named)]
-            (is (uuid-shaped? before)
-                (str "precondition: the anonymous visit already has a row — web-base keeps"
-                     " the CSRF token in the session, so a session exists before anyone"
-                     " names themselves"))
-            (is (= [303 "/"] (redirected-home named)) "the POST is accepted")
+          (let [anon (handle (mock/request :get "/"))]
+            (is (= [200 nil []] [(:status anon) (cookie-of anon) (session-rows path)])
+                (str "an anonymous page with a form sets no session and writes no row: since"
+                     " web-base 0.21.0 a token is born only when a session rotates, so a"
+                     " visitor who never names themselves costs nothing here")))
+          ;; Rotation is the defence against fixation, so the visitor must ARRIVE with an
+          ;; id — one a third party could have planted. Since no anonymous page mints one,
+          ;; the id they arrive with is a named session's.
+          (let [[first-name before] (name-yourself! handle "mallory")
+                _         (is (= [[303 "/"] true [before]]
+                                 [(redirected-home first-name) (uuid-shaped? before) (mapv first (session-rows path))])
+                              (str "precondition: the visitor arrives holding a session that is a row"
+                                   " the store minted, and the only one"))
+                signed-in (handle (carrying (mock/request :get "/") before))
+                named     (handle (-> (mock/request :post "/session"
+                                                    {"visitor" "ada"
+                                                     "__anti-forgery-token" (wt/csrf-token signed-in)})
+                                      (carrying before)))
+                after     (cookie-of named)]
+            (is (= [303 "/"] (redirected-home named))
+                (str "the POST is accepted — with that session's token, which only a rotation"
+                     " mints: a host that named the visitor without rotating reds here first,"
+                     " its session holding no token to send"))
             (is (uuid-shaped? after)
                 (str "and the response carries a session cookie. Without `rotate` Ring would"
                      " update the row in place and re-set nothing, so there would be no"
@@ -272,12 +287,7 @@
                            (assoc built :session {:key "AAECAwQFBgcICQoLDA0ODw=="
                                                   :cookie-attrs (get-in (wb/expand built) [:session :cookie-attrs])}))]
         (try
-          (let [form      (over-a-cookie (mock/request :get "/"))
-                named     (over-a-cookie (-> (mock/request :post "/session"
-                                                           {"visitor" visitor
-                                                            "__anti-forgery-token" (wt/csrf-token form)})
-                                             (wt/with-cookies form)))
-                stolen    (cookie-of named)
+          (let [[named stolen] (name-yourself! over-a-cookie visitor)
                 signed-in (over-a-cookie (carrying (mock/request :get "/") stolen))]
             (is (and (some? stolen) (not (uuid-shaped? stolen)))
                 (str "precondition: this really is the cookie store — its value is a sealed"
@@ -325,8 +335,7 @@
                    [(dissoc (session-of path key-a) :ring.middleware.anti-forgery/anti-forgery-token)
                     (dissoc (session-of path key-b) :ring.middleware.anti-forgery/anti-forgery-token)])
                 (str "precondition, about the rows and not their number: two sessions of the"
-                     " SAME visitor. A count alone would be satisfied by the anonymous rows"
-                     " the CSRF token leaves behind"))
+                     " SAME visitor. A count alone would not say whose they are"))
             (is (not= key-a key-b) "under keys of their own")
             (let [signed-in (handle (carrying (mock/request :get "/") key-a))]
               (handle (-> (mock/request :post "/session/end"
@@ -357,9 +366,8 @@
                 [[_ _ expires]]   (session-rows path)]
             (is (= [303 "/"] (redirected-home response))
                 (str "precondition, which every other caller of this helper already makes:"
-                     " the visitor really was named. The anonymous row the CSRF token leaves"
-                     " behind falls inside the same window, so the bound below is green for"
-                     " the wrong reason without it"))
+                     " the visitor really was named. Without it the bound below meets no row"
+                     " and errors instead of naming the refusal"))
             (is (<= (+ before want) expires (+ after want))
                 (str "the row expires one lifetime from when it was written, and the lifetime"
                      " is the one `config.edn` names — read from the resource, not from the"
@@ -391,12 +399,12 @@
           (finally (ig/halt! system))))
       (finally (delete-db! path)))))
 
-(deftest an-anonymous-visit-costs-a-row-and-the-host-can-reclaim-it
-  ;; Two things, and only the second is db-base's. **The cost**: a page that renders a
-  ;; form keeps its CSRF token in the session, so a visitor who opens one and never comes
-  ;; back leaves a row. Since web-base 0.4.0 that is the only way: a request that renders
-  ;; no token writes no session, and a health probe reads none — three probes, zero rows,
-  ;; pinned below, where on 2026-09-21 three probes cost three.
+(deftest an-anonymous-visit-costs-no-row-and-the-host-can-reclaim-a-named-one
+  ;; Two things, and only the second is db-base's. **The cost**: on 2026-09-21 three
+  ;; health probes cost three rows; web-base 0.4.0 made that zero, and a page rendering a
+  ;; form still cost one, because its CSRF token lived in the session. Since web-base
+  ;; 0.21.0 an anonymous form carries no token and is checked by origin instead, so that
+  ;; page costs nothing either: only a session that holds something is a row.
   ;; **What is db-base's**, and what nothing else in this suite exercised: the host can
   ;; sweep those rows itself, through the handle it already holds, and §11 records that as
   ;; the only way they ever go.
@@ -409,9 +417,15 @@
           (is (= 0 (count (session-rows path))) "precondition: nothing stored yet")
           (dotimes [_ 3] (handle (mock/request :get "/health")))
           (is (= 0 (count (session-rows path))) "three health probes leave no row")
-          (handle (mock/request :get "/"))
+          (let [anon (handle (mock/request :get "/"))]
+            (is (= [200 true] [(:status anon) (str/includes? (:body anon) "name=\"visitor\"")])
+                "witness: the anonymous page was served, and it renders a form")
+            (is (= 0 (count (session-rows path)))
+                (str "and a visitor who opens it and never names themselves costs no row")))
+          (is (= [303 "/"] (redirected-home (first (name-yourself! handle "ada"))))
+              "precondition: a visitor names themselves")
           (is (= 1 (count (session-rows path)))
-              (str "a visitor who has not even named themselves already costs a row"))
+              "and that session — the one thing that holds something — is the row")
           (is (= 0 (session/reclaim-expired! db))
               (str "and a sweep now takes none of it: the row is live, and reclaiming is"
                    " about disk rather than about revoking"))
@@ -509,8 +523,8 @@
         ;; one — is what tells the sessionless mount from a route: behind the session
         ;; layer its cookie makes the store read, and on a closed pool that read throws
         ;; before any route runs. A probe with no cookie reads nothing either way.
-        (let [cookie (cookie-of (handler (mock/request :get "/")))]
-          (is (some? cookie) "precondition: the home page gave this visitor a session")
+        (let [[_ cookie] (name-yourself! handler "ada")]
+          (is (some? cookie) "precondition: naming themselves gave this visitor a session")
           (ig/halt! system)
           (let [probe (handler (carrying (mock/request :get "/health") cookie))]
             (is (= [503 "unavailable"] [(:status probe) (:body probe)])
