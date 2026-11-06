@@ -7,7 +7,7 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
-## 0.9.0 — unreleased
+## 0.9.0 — 2026-11-06
 
 From what building `academy`, a sixth application, cost (its `FRICTION.md`).
 
