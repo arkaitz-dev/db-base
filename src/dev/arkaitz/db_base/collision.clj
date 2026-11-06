@@ -75,7 +75,11 @@
   (SPEC §9), so none is taken here. **The usual answer inside a transaction is not this
   function at all** but a write that asks its own question — an insert whose `SELECT`
   carries a `WHERE NOT EXISTS` for the row it would add — because nothing about it can be
-  refused; the README's recipes show one.
+  refused; the README's recipes show one. **Around the whole transaction is a right
+  shape too**: `write!` opens, writes and commits, so a refusal anywhere in it rolls
+  back before `re-read` runs, outside it, against what is committed (measured in the
+  academy: a second enrolment refused by the role's key after its seat was taken came
+  back as the role already held, with the seat given back).
 
   A write that failed because no connection could be borrowed makes the re-read borrow
   too, so that failure costs the pool's timeout twice."

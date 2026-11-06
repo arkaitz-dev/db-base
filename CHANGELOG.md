@@ -7,6 +7,27 @@ the behaviour. Every release is on Clojars as `dev.arkaitz/db-base` and tagged `
 A change to what this library ships in `src` is a release; one to its README, its
 hosts or its tests is not.
 
+## 0.9.0 — unreleased
+
+From what building `academy`, a sixth application, cost (its `FRICTION.md`).
+
+- **Breaking: `collision/arbitrate!` rethrows a rolled-back transaction without a look**
+  (A14). When the write's exception, or an `SQLException` among its first 32 links,
+  carries a state of class 40 other than 40003 — 40P01 a deadlock, 40001 a serialization
+  failure — the write's own exception leaves and `re-read` is never called. The engine
+  rolled the transaction back while another writer was in flight, so a look then read a
+  world still moving and answered it with confidence. A host that relied on the look
+  after a deadlock now receives the exception: retry the transaction, or report it. 40003
+  (completion unknown) still looks. SPEC §10 amended.
+- `testing/parking` takes `{:at :commit}`: the park sits at the first `Connection.commit`
+  its predicate accepts, which is handed `:commit` (A10). That is the window between a
+  transaction's last statement and its commit, which no park before a statement
+  reaches. A keyword or a symbol as the predicate, and unknown options, are refused.
+- The README's recipes gain three, measured in the academy on PostgreSQL: lock order
+  (every writer takes the parent row first, A14), a conditional UPDATE that skips a row
+  without waiting under READ COMMITTED (A9), and `arbitrate!` around a whole transaction
+  (A12).
+
 ## 0.8.0 — 2026-11-05
 
 From what building `shop`, a fifth application, cost (its `FRICTION.md`).

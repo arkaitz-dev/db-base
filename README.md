@@ -233,8 +233,22 @@ Two rules are yours to keep:
 It holds no SQL and takes no datasource, on purpose: a function here that accepted a
 statement would be the first step of a query builder, which `SPEC.md` §9 forbids.
 
-It is for a write in autocommit. Inside a transaction you opened, use a conditional write
-instead — see the recipes below.
+It is for a write in autocommit, or **around a whole transaction**: the first function
+opens it, writes and commits, so a refusal anywhere inside rolls the transaction back
+before the look runs — outside it, against what is committed. Measured in the academy on
+SQLite and PostgreSQL: an enrolment takes a seat and then inserts the student's role,
+which a role already held refuses; wrapped whole, it answered "already a student" with the
+seat given back. What it is not for is one statement *inside* a transaction you keep
+using: there, write conditionally — see the recipes below.
+
+```clojure
+(collision/arbitrate!
+ #(jdbc/with-transaction [tx ds]
+    (take-seat! tx course-id)
+    (insert-role! tx course-id subject "student")
+    :enrolled)
+ #(role-of ds course-id subject))    ; ds, never tx: the transaction is gone
+```
 
 **When the right answer is "the write lost"** — a second click whose first won — the look
 must still answer something truthy, or the write's exception leaves. Answer a sentinel and
@@ -323,6 +337,31 @@ Use a temporary file.
   membership WHERE …)`. On PostgreSQL a refused statement aborts the whole transaction, so
   `arbitrate!`'s look afterwards has nothing to look through — and SQLite, which keeps the
   transaction alive, would let the mistake pass every test.
+- **Two transactions that take the same rows in different orders deadlock on
+  PostgreSQL, so every writer takes the parent row first.** A withdrawal that deleted the
+  student's row and then updated the course's, beside a re-enrolment that updated the
+  course's and then inserted the student's, each held what the other wanted: PostgreSQL
+  aborted one with 40P01 (measured in the academy). The order that cannot deadlock is a
+  rule of the schema, not of a function: every transaction that changes a course's
+  members, seats or waiting list updates that course's row first —
+  `UPDATE course SET taken = taken WHERE id = ?` changes nothing and takes the row's
+  lock — and one that touches several courses takes them in one order, by id. SQLite
+  under `transaction_mode=IMMEDIATE` serialises whole transactions and never shows the
+  deadlock, so only a test on PostgreSQL that forces the interleaving with `parking` sees
+  it. The victim's exception is a refusal like any other; `arbitrate!` rethrows it without
+  a look (since 0.9.0), and the host retries or reports it.
+- **On PostgreSQL a conditional UPDATE that finds the row failing its `WHERE` does not
+  wait for a transaction that is changing that row.** Under READ COMMITTED the row is
+  judged by its last committed version: if that version fails the condition, the row is
+  skipped at once; only a row whose committed version passes waits for the lock and is
+  judged again after the other commits. Measured in the academy: an enrolment's
+  `UPDATE course SET taken = taken + 1 WHERE id = ? AND taken < capacity`, beside a
+  withdrawal giving its seat back but not yet committed, found the course full without
+  waiting and put the student on the waiting list, leaving a seat free behind them. When
+  "nothing changed" is going to decide something, touch the row first —
+  `UPDATE course SET taken = taken WHERE id = ?`, which waits for the other transaction —
+  and then ask again: each statement of a READ COMMITTED transaction sees what committed
+  before it began. SQLite cannot show this; a forced race on PostgreSQL can.
 - **Counters and epoch milliseconds are `BIGINT`, never `NUMERIC`.** A `NUMERIC` column
   comes back as a `BigDecimal`, and `(= 0M 0)` is false in Clojure — so a revocation
   generation compared with `=` silently never matches.
