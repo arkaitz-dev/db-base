@@ -231,7 +231,10 @@
   as for `parking` — every wait bounded by `guard-ms` (10 s unless given), and the park
   ended even when `first!` throws, which then leaves this function. `first!` and
   `second!` are functions of a datasource. The race a test of single use, of no overlap,
-  of exactly once builds: five hosts wrote this by hand (booking FRICTION B24)."
+  of exactly once builds: five hosts wrote this by hand (booking FRICTION B24).
+
+  Destructure the answer by renaming, `{a :first b :second}`: `{:keys [first second]}`
+  shadows `clojure.core`'s functions for the rest of the test (booking FRICTION BU6)."
   ([handle accepts? first! second!] (in-flight handle accepts? first! second! 10000))
   ([handle accepts? first! second! guard-ms]
    (let [{:keys [arrived release! exit] parked :handle} (parking handle accepts? guard-ms)

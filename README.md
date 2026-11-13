@@ -229,6 +229,9 @@ Two rules are yours to keep:
   key. A look by key alone accepts somebody else's row as your own.
 - **It reads.** A fallback that writes is update-or-insert, which is exactly what the
   session store refuses to be; where it is right for a table of yours, write it out.
+  Nor does it take the act's next step — a mail to enqueue, a refusal of your own: what
+  the second function throws leaves as the write's exception, the collision, with yours
+  only suppressed beneath it. Take that step after `arbitrate!` returns.
 
 It holds no SQL and takes no datasource, on purpose: a function here that accepted a
 statement would be the first step of a query builder, which `SPEC.md` §9 forbids.
@@ -299,7 +302,10 @@ as the error it is.
   lets the second go, and answers `{:arrived :exit :first :second}` — every wait bounded,
   the park ended even when `first!` throws (since 0.6.0). It is the race a test of single
   use, of no overlap or of exactly once needs; keep a naive version of the code beside it
-  as the control that must let both callers through.
+  as the control that must let both callers through. Destructure the answer by renaming
+  — `{a :first b :second}` — never `{:keys [first second]}`, which shadows
+  `clojure.core`'s two functions in the test's body: a `(map first rows)` there reads
+  nil from every row, in silence (booking FRICTION BU6).
 
 - **`sessions` and `session`** read §8's table the same way — every row ordered by id,
   or one by id, as `{:id :data :expires-at}` with `:data` the EDN text as written — so a

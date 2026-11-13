@@ -59,7 +59,10 @@
   **`re-read` reads.** It runs after a write has already failed, and nothing here makes a
   second write safe at that point. A fallback that writes is a different contract —
   update, and create when nothing was there — which SPEC §8 is the argument against; where
-  it is right for a host's own table, it stays in that host.
+  it is right for a host's own table, it stays in that host. Nor does it do the act's
+  next step — a mail to write, a check of the host's own that refuses: anything it
+  throws leaves as the write's exception below, the collision it looked at, naming the
+  wrong cause (booking FRICTION BU3). That step goes after this function returns.
 
   If `re-read` throws, the write's exception is the one that leaves, with the re-read's
   added as suppressed, unless the re-read threw an `Error` or was interrupted: that one
